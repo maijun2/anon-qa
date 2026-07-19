@@ -155,18 +155,28 @@ async function handleAdminQuestion(
     const body = await readJson<{ body?: string }>(request);
     const text = body?.body?.trim();
     if (!text) return errorJson("回答内容を入力してください", 400);
+    const now = Date.now();
     await env.DB.batch([
-      env.DB.prepare("INSERT INTO answers (id, question_id, body, created_at) VALUES (?, ?, ?, ?)").bind(
-        crypto.randomUUID(),
-        question.id,
-        text,
-        Date.now(),
-      ),
+      env.DB.prepare(
+        `INSERT INTO answers (id, question_id, body, author_role, token_hash, created_at, updated_at)
+         VALUES (?, ?, ?, 'instructor', NULL, ?, ?)`,
+      ).bind(crypto.randomUUID(), question.id, text, now, now),
       env.DB.prepare("UPDATE questions SET is_answered = 1 WHERE id = ?").bind(question.id),
     ]);
     const updated = await getPublicQuestion(env, question.id);
     await broadcast(env, session.code, "question:updated", { question: updated });
     return json({ question: updated }, 201);
+  }
+
+  // 返信のモデレーション削除(参加者返信・講師回答とも削除可)。is_answered は自動で変えない
+  if (rest.length === 3 && rest[1] === "answers" && method === "DELETE") {
+    const result = await env.DB.prepare("DELETE FROM answers WHERE id = ? AND question_id = ?")
+      .bind(rest[2], question.id)
+      .run();
+    if (!result.meta.changes) return errorJson("返信が見つかりません", 404);
+    const updated = await getPublicQuestion(env, question.id);
+    await broadcast(env, session.code, "question:updated", { question: updated });
+    return json({ question: updated });
   }
 
   if (rest.length === 2 && rest[1] === "answered" && method === "PATCH") {

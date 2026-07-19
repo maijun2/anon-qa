@@ -45,6 +45,21 @@ window.AnonQA = (() => {
     })[c]);
   }
 
+  // 本文表示用: エスケープした上で URL のみアンカー化する。
+  // 必ずこの関数内でエスケープする(エスケープ済みテキスト以外にリンク化を適用すると XSS になるため)。
+  // URL は ASCII の URL 構成文字に限定(直後にスペースなしで日本語が続いても取り込まない)。
+  // エスケープ済みテキスト上で動くため、URL 内の & " ' は &amp; &quot; &#39; として現れる
+  function linkify(value) {
+    return escapeHtml(value).replace(/https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/g, (url) => {
+      // 文末の約物・引用符(エンティティ形)はリンクに含めない
+      const m = url.match(/(?:&(?:quot|#39);|[),.!?])+$/);
+      const trail = m ? m[0] : "";
+      const href = trail ? url.slice(0, -trail.length) : url;
+      if (!href.replace(/^https?:\/\//, "")) return url;
+      return `<a href="${href}" target="_blank" rel="noopener noreferrer">${href}</a>${trail}`;
+    });
+  }
+
   // 保存は UTC(epoch ms)、表示は JST
   function formatJst(ms) {
     return new Date(ms).toLocaleString("ja-JP", {
@@ -106,5 +121,5 @@ window.AnonQA = (() => {
     };
   }
 
-  return { anonToken, getEntryToken, setEntryToken, api, escapeHtml, formatJst, formatJstDate, connectWs };
+  return { anonToken, getEntryToken, setEntryToken, api, escapeHtml, linkify, formatJst, formatJstDate, connectWs };
 })();

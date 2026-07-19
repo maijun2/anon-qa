@@ -147,13 +147,14 @@
           <span class="muted small">👍 ${q.votes}</span>
           ${q.isAnswered ? '<span class="badge badge-answered">回答済み</span>' : ""}
         </div>
-        <p class="question-body">${esc(q.body)}</p>
+        <p class="question-body">${AnonQA.linkify(q.body)}</p>
         ${q.imageKey ? `<a href="${imageUrl(q.imageKey)}" target="_blank" rel="noopener"><img class="question-image" src="${imageUrl(q.imageKey)}" alt="添付画像" loading="lazy"></a>` : ""}
         ${q.answers.length ? `<div class="answers">${q.answers.map((a) => `
-          <div class="answer">
-            <span class="answer-label">回答</span>
-            <p>${esc(a.body)}</p>
-            <span class="muted small">${AnonQA.formatJst(a.createdAt)}</span>
+          <div class="answer${a.authorRole === "instructor" ? "" : " answer-participant"}" data-answer-id="${esc(a.id)}">
+            <span class="answer-label${a.authorRole === "instructor" ? "" : " answer-label-participant"}">${a.authorRole === "instructor" ? "講師" : "参加者"}</span>
+            <p>${AnonQA.linkify(a.body)}</p>
+            <span class="muted small">${AnonQA.formatJst(a.createdAt)}${a.updatedAt > a.createdAt ? "(編集済み)" : ""}</span>
+            <button class="btn btn-small btn-ghost btn-danger-text" data-action="delete-answer">削除</button>
           </div>`).join("")}</div>` : ""}
         ${state.answeringId === q.id ? `
           <div class="field" style="margin-top: 8px;">
@@ -219,6 +220,15 @@
         state.questions = state.questions.filter((x) => x.id !== q.id);
         renderQuestions();
       }
+      if (action === "delete-answer") {
+        if (!confirm("この返信を削除しますか?")) return;
+        const answerId = btn.closest("[data-answer-id]").dataset.answerId;
+        const data = await AdminQA.api(`/sessions/${sessionId}/questions/${q.id}/answers/${answerId}`, {
+          method: "DELETE",
+        });
+        Object.assign(q, data.question);
+        renderQuestions();
+      }
     } catch (e) {
       alert(e.message);
     }
@@ -245,7 +255,7 @@
               ? `<a href="${esc(m.url)}" target="_blank" rel="noopener noreferrer"><strong>${esc(m.title)}</strong></a>`
               : `<strong>${esc(m.title)}</strong>`}
           </div>
-          ${m.body ? `<p class="material-body">${esc(m.body)}</p>` : ""}
+          ${m.body ? `<p class="material-body">${AnonQA.linkify(m.body)}</p>` : ""}
           <div class="admin-item-actions">
             <button class="btn btn-small btn-ghost" data-action="move-up" ${index === 0 ? "disabled" : ""}>↑</button>
             <button class="btn btn-small btn-ghost" data-action="move-down" ${index === state.materials.length - 1 ? "disabled" : ""}>↓</button>

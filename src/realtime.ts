@@ -18,6 +18,8 @@ export function forwardWebSocket(env: Env, code: string, request: Request): Prom
 
 export const RATE_LIMITS = {
   question: { limit: 5, windowMs: 60_000 },
+  // 返信は question と別バケット(会場 NAT の同一 IP で質問と枠を食い合わせない)
+  answer: { limit: 5, windowMs: 60_000 },
   vote: { limit: 30, windowMs: 60_000 },
   image: { limit: 10, windowMs: 60_000 },
   survey: { limit: 30, windowMs: 60_000 },

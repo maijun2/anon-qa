@@ -85,3 +85,17 @@ export async function postQuestion(
   const data = (await res.json()) as { question: { id: string } };
   return data.question;
 }
+
+export async function postReply(
+  ctx: ParticipantContext,
+  questionId: string,
+  body = "テスト返信です",
+): Promise<{ answerId: string }> {
+  const res = await SELF.fetch(`${BASE}/api/s/${ctx.code}/questions/${questionId}/answers`, {
+    method: "POST",
+    headers: participantHeaders(ctx),
+    body: JSON.stringify({ body }),
+  });
+  if (res.status !== 201) throw new Error(`post reply failed: ${res.status}`);
+  return (await res.json()) as { answerId: string };
+}

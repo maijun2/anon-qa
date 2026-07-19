@@ -91,9 +91,9 @@
           <span class="vote-display">👍 ${q.votes}</span>
           ${q.isAnswered ? '<span class="badge badge-answered">回答済み</span>' : ""}
         </div>
-        <p class="question-body">${esc(q.body)}</p>
+        <p class="question-body">${AnonQA.linkify(q.body)}</p>
         ${q.answers.length ? `<div class="answers">${q.answers.map((a) => `
-          <div class="answer"><span class="answer-label">回答</span><p>${esc(a.body)}</p></div>`).join("")}</div>` : ""}
+          <div class="answer${a.authorRole === "instructor" ? "" : " answer-participant"}"><span class="answer-label${a.authorRole === "instructor" ? "" : " answer-label-participant"}">${a.authorRole === "instructor" ? "講師" : "参加者"}</span><p>${AnonQA.linkify(a.body)}</p></div>`).join("")}</div>` : ""}
       </article>`).join("");
     $("question-empty").hidden = list.length > 0;
   }

@@ -38,7 +38,12 @@ export interface AnswerRow {
   id: string;
   question_id: string;
   body: string;
+  author_role: "instructor" | "participant";
+  /** 参加者返信の本人判定用ハッシュ。講師回答は null */
+  token_hash: string | null;
   created_at: number;
+  /** 0002 以前の既存行は null(created_at 扱い) */
+  updated_at: number | null;
 }
 
 export interface MaterialRow {

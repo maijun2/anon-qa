@@ -24,7 +24,23 @@ export function publicSession(s: SessionRow) {
 export interface PublicAnswer {
   id: string;
   body: string;
+  authorRole: "instructor" | "participant";
+  /** 閲覧者自身の返信か。ブロードキャスト時は常に false(フロントが復元する) */
+  isMine: boolean;
   createdAt: number;
+  updatedAt: number;
+}
+
+/** answers の token_hash はこの関数の外に出さない(isMine の計算までで消費する) */
+function toPublicAnswer(a: AnswerRow, myHash: string | null): PublicAnswer {
+  return {
+    id: a.id,
+    body: a.body,
+    authorRole: a.author_role,
+    isMine: a.token_hash !== null && a.token_hash === myHash,
+    createdAt: a.created_at,
+    updatedAt: a.updated_at ?? a.created_at,
+  };
 }
 
 export interface PublicQuestion {
@@ -55,7 +71,11 @@ function toPublicQuestion(q: QuestionRow & { vote_count: number }, answers: Publ
  * セッションの全質問。tokenHash は本人判定(isMine)用で、レスポンスに含めては
  * ならない(admin にも返さない — ハッシュでも投稿者の紐付けが可能になるため)。
  */
-export async function listQuestions(env: Env, sessionId: string): Promise<Array<PublicQuestion & { tokenHash: string }>> {
+export async function listQuestions(
+  env: Env,
+  sessionId: string,
+  myHash: string | null = null,
+): Promise<Array<PublicQuestion & { tokenHash: string }>> {
   const questions = await env.DB.prepare(
     `SELECT q.*, (SELECT COUNT(*) FROM votes v WHERE v.question_id = q.id) AS vote_count
      FROM questions q WHERE q.session_id = ? ORDER BY q.created_at DESC`,
@@ -73,7 +93,7 @@ export async function listQuestions(env: Env, sessionId: string): Promise<Array<
   const answersByQuestion = new Map<string, PublicAnswer[]>();
   for (const a of answers.results) {
     const list = answersByQuestion.get(a.question_id) ?? [];
-    list.push({ id: a.id, body: a.body, createdAt: a.created_at });
+    list.push(toPublicAnswer(a, myHash));
     answersByQuestion.set(a.question_id, list);
   }
 
@@ -83,7 +103,11 @@ export async function listQuestions(env: Env, sessionId: string): Promise<Array<
   }));
 }
 
-export async function getPublicQuestion(env: Env, questionId: string): Promise<PublicQuestion | null> {
+export async function getPublicQuestion(
+  env: Env,
+  questionId: string,
+  myHash: string | null = null,
+): Promise<PublicQuestion | null> {
   const q = await env.DB.prepare(
     `SELECT q.*, (SELECT COUNT(*) FROM votes v WHERE v.question_id = q.id) AS vote_count
      FROM questions q WHERE q.id = ?`,
@@ -96,7 +120,7 @@ export async function getPublicQuestion(env: Env, questionId: string): Promise<P
     .all<AnswerRow>();
   return toPublicQuestion(
     q,
-    answers.results.map((a) => ({ id: a.id, body: a.body, createdAt: a.created_at })),
+    answers.results.map((a) => toPublicAnswer(a, myHash)),
   );
 }
 

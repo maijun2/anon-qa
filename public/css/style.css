@@ -322,6 +322,13 @@ label { font-size: 0.9rem; }
   color: var(--accent-strong);
 }
 
+/* 参加者の返信は色 + ラベルで講師回答と区別する(色のみに依存しない) */
+.answer-participant { border-left-color: var(--border); }
+.answer-label-participant { color: var(--text-muted); }
+
+/* 本文中の自動リンク */
+.question-body a, .answer a, .material-body a { color: var(--accent); word-break: break-all; }
+
 .answered-section { margin-top: 24px; }
 .answered-section summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
 .answered-section > .stack { margin-top: 8px; }

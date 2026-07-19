@@ -20,6 +20,10 @@
     sort: "new",
     pendingImage: null,
     editingId: null,
+    replyingId: null,
+    editingAnswerId: null,
+    // 自分の返信 ID。ブロードキャストの isMine は常に false のため、ここで復元する
+    myAnswerIds: new Set(),
   };
 
   // ---------- タブ ----------
@@ -78,6 +82,9 @@
   async function loadQuestions() {
     const data = await AnonQA.api(code, "/questions");
     state.questions = data.questions;
+    for (const q of state.questions) {
+      for (const a of q.answers) if (a.isMine) state.myAnswerIds.add(a.id);
+    }
     renderQuestions();
   }
 
@@ -146,10 +153,16 @@
   function upsertQuestion(question) {
     if (!question) return;
     const existing = state.questions.find((q) => q.id === question.id);
+    let target;
     if (existing) {
       Object.assign(existing, question, { isMine: existing.isMine, voted: existing.voted });
+      target = existing;
     } else {
-      state.questions.unshift(Object.assign({ isMine: false, voted: false }, question));
+      target = Object.assign({ isMine: false, voted: false }, question);
+      state.questions.unshift(target);
+    }
+    for (const a of target.answers || []) {
+      a.isMine = a.isMine || state.myAnswerIds.has(a.id);
     }
   }
 
@@ -196,7 +209,7 @@
              <button class="btn btn-ghost btn-small" data-action="cancel-edit">キャンセル</button>
            </div>
          </div>`
-      : `<p class="question-body">${esc(q.body)}</p>`;
+      : `<p class="question-body">${AnonQA.linkify(q.body)}</p>`;
     return `
       <article class="${classes.join(" ")}" data-id="${esc(q.id)}">
         <div class="question-head">
@@ -207,22 +220,54 @@
         </div>
         ${bodyHtml}
         ${q.imageKey ? `<a href="${imageUrl(q.imageKey)}" target="_blank" rel="noopener"><img class="question-image" src="${imageUrl(q.imageKey)}" alt="添付画像" loading="lazy"></a>` : ""}
-        ${q.answers.length ? `<div class="answers">${q.answers.map((a) => `
-          <div class="answer">
-            <span class="answer-label">講師の回答</span>
-            <p>${esc(a.body)}</p>
-            <span class="muted small">${AnonQA.formatJst(a.createdAt)}</span>
-          </div>`).join("")}</div>` : ""}
+        ${q.answers.length ? `<div class="answers">${q.answers.map((a) => answerHtml(a)).join("")}</div>` : ""}
+        ${state.replyingId === q.id ? `
+          <div class="field reply-form">
+            <textarea class="textarea reply-input" rows="2" placeholder="返信を入力(匿名で投稿されます)"></textarea>
+            <div class="admin-item-actions">
+              <button class="btn btn-primary btn-small" data-action="submit-reply">返信を送信</button>
+              <button class="btn btn-ghost btn-small" data-action="cancel-reply">キャンセル</button>
+            </div>
+          </div>` : ""}
         <div class="question-actions">
           <button class="vote-btn${q.voted ? " voted" : ""}" data-action="vote" aria-pressed="${q.voted}"
             ${state.ended || q.pending ? "disabled" : ""} aria-label="いいね">
             👍 <span class="vote-count">${q.votes}</span>
           </button>
+          ${!state.ended && !q.pending && state.replyingId !== q.id
+            ? '<button class="btn btn-ghost btn-small" data-action="reply">返信する</button>' : ""}
           ${editable && !isEditing ? `
             <button class="btn btn-ghost btn-small" data-action="edit">編集</button>
             <button class="btn btn-ghost btn-small btn-danger-text" data-action="delete">削除</button>` : ""}
         </div>
       </article>`;
+  }
+
+  function answerHtml(a) {
+    if (state.editingAnswerId === a.id) {
+      return `
+        <div class="answer" data-answer-id="${esc(a.id)}">
+          <div class="field">
+            <textarea class="textarea answer-edit-input" rows="2">${esc(a.body)}</textarea>
+            <div class="admin-item-actions">
+              <button class="btn btn-primary btn-small" data-action="save-edit-answer">保存</button>
+              <button class="btn btn-ghost btn-small" data-action="cancel-edit-answer">キャンセル</button>
+            </div>
+          </div>
+        </div>`;
+    }
+    const isInstructor = a.authorRole === "instructor";
+    const editable = a.isMine && !state.ended;
+    return `
+      <div class="answer${isInstructor ? "" : " answer-participant"}" data-answer-id="${esc(a.id)}">
+        <span class="answer-label${isInstructor ? "" : " answer-label-participant"}">${isInstructor ? "講師" : "参加者"}</span>
+        ${a.isMine ? '<span class="badge badge-mine">自分の返信</span>' : ""}
+        <p>${AnonQA.linkify(a.body)}</p>
+        <span class="muted small">${AnonQA.formatJst(a.createdAt)}${a.updatedAt > a.createdAt ? "(編集済み)" : ""}</span>
+        ${editable ? `
+          <button class="btn btn-ghost btn-small" data-action="edit-answer">編集</button>
+          <button class="btn btn-ghost btn-small btn-danger-text" data-action="delete-answer">削除</button>` : ""}
+      </div>`;
   }
 
   function imageUrl(imageKey) {
@@ -252,8 +297,67 @@
       if (action === "cancel-edit") { state.editingId = null; renderQuestions(); }
       if (action === "save-edit") saveEdit(q, card.querySelector(".edit-input").value);
       if (action === "delete") deleteQuestion(q);
+      if (action === "reply") {
+        state.replyingId = q.id;
+        renderQuestions();
+        const input = document.querySelector(`[data-id="${CSS.escape(q.id)}"] .reply-input`);
+        if (input) input.focus();
+      }
+      if (action === "cancel-reply") { state.replyingId = null; renderQuestions(); }
+      if (action === "submit-reply") submitReply(q, card.querySelector(".reply-input").value);
+      const answerEl = btn.closest("[data-answer-id]");
+      const answerId = answerEl ? answerEl.dataset.answerId : null;
+      if (action === "edit-answer") { state.editingAnswerId = answerId; renderQuestions(); }
+      if (action === "cancel-edit-answer") { state.editingAnswerId = null; renderQuestions(); }
+      if (action === "save-edit-answer") saveAnswerEdit(q, answerId, answerEl.querySelector(".answer-edit-input").value);
+      if (action === "delete-answer") deleteAnswer(q, answerId);
     });
   });
+
+  // ---------- 返信スレッド ----------
+  async function submitReply(q, text) {
+    const body = text.trim();
+    if (!body) return;
+    try {
+      const res = await AnonQA.api(code, `/questions/${q.id}/answers`, {
+        method: "POST",
+        body: JSON.stringify({ body }),
+      });
+      state.myAnswerIds.add(res.answerId);
+      state.replyingId = null;
+      upsertQuestion(res.question);
+    } catch (e) {
+      alert(e.message);
+    }
+    renderQuestions();
+  }
+
+  async function saveAnswerEdit(q, answerId, text) {
+    const body = text.trim();
+    if (!body) return;
+    try {
+      const res = await AnonQA.api(code, `/questions/${q.id}/answers/${answerId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ body }),
+      });
+      state.editingAnswerId = null;
+      upsertQuestion(res.question);
+    } catch (e) {
+      alert(e.message);
+    }
+    renderQuestions();
+  }
+
+  async function deleteAnswer(q, answerId) {
+    if (!confirm("この返信を削除しますか?")) return;
+    try {
+      const res = await AnonQA.api(code, `/questions/${q.id}/answers/${answerId}`, { method: "DELETE" });
+      upsertQuestion(res.question);
+    } catch (e) {
+      alert(e.message);
+    }
+    renderQuestions();
+  }
 
   async function toggleVote(q) {
     if (state.ended) return;
@@ -452,7 +556,7 @@
           ${m.url
             ? `<a href="${esc(m.url)}" target="_blank" rel="noopener noreferrer"><strong>${esc(m.title)}</strong></a>`
             : `<strong>${esc(m.title)}</strong>`}
-          ${m.body ? `<p class="material-body">${esc(m.body)}</p>` : ""}
+          ${m.body ? `<p class="material-body">${AnonQA.linkify(m.body)}</p>` : ""}
         </div>`).join("");
       html += "</div>";
     }

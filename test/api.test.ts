@@ -9,6 +9,7 @@ import {
   mockTurnstile,
   participantHeaders,
   postQuestion,
+  postReply,
 } from "./helpers";
 
 beforeAll(() => {
@@ -249,6 +250,150 @@ describe("講師回答・回答済み管理", () => {
     const q = list.questions.find((x) => x.id === question.id);
     expect(q?.isAnswered).toBe(true);
     expect(q?.answers.length).toBe(1);
+  });
+});
+
+describe("回答スレッド(参加者返信)", () => {
+  interface ThreadAnswer {
+    id: string;
+    body: string;
+    authorRole: string;
+    isMine: boolean;
+  }
+
+  async function getQuestion(ctx: Awaited<ReturnType<typeof enter>>, questionId: string) {
+    const list = (await (
+      await SELF.fetch(`${BASE}/api/s/${ctx.code}/questions`, { headers: participantHeaders(ctx) })
+    ).json()) as { questions: Array<{ id: string; isAnswered: boolean; answers: ThreadAnswer[] }> };
+    return list.questions.find((x) => x.id === questionId);
+  }
+
+  it("参加者が返信でき、isAnswered は変わらない。isMine は本人のみ true", async () => {
+    const cookie = await adminLogin();
+    const session = await createSession(cookie);
+    const ctx = await enter(session.code);
+    const other = await enter(session.code);
+    const question = await postQuestion(ctx);
+
+    const { answerId } = await postReply(other, question.id, "便乗質問です");
+
+    const mine = await getQuestion(other, question.id);
+    expect(mine?.isAnswered).toBe(false);
+    expect(mine?.answers.length).toBe(1);
+    expect(mine?.answers[0]).toMatchObject({ id: answerId, authorRole: "participant", isMine: true });
+
+    // 質問者から見ると他人の返信(isMine=false)
+    const theirs = await getQuestion(ctx, question.id);
+    expect(theirs?.answers[0].isMine).toBe(false);
+  });
+
+  it("講師回答は authorRole=instructor で届き、参加者は編集・削除できない", async () => {
+    const cookie = await adminLogin();
+    const session = await createSession(cookie);
+    const ctx = await enter(session.code);
+    const question = await postQuestion(ctx);
+
+    await SELF.fetch(`${BASE}/api/admin/sessions/${session.id}/questions/${question.id}/answers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ body: "講師回答" }),
+    });
+    const q = await getQuestion(ctx, question.id);
+    expect(q?.answers[0].authorRole).toBe("instructor");
+    expect(q?.answers[0].isMine).toBe(false);
+
+    const patched = await SELF.fetch(
+      `${BASE}/api/s/${ctx.code}/questions/${question.id}/answers/${q?.answers[0].id}`,
+      { method: "PATCH", headers: participantHeaders(ctx), body: JSON.stringify({ body: "改ざん" }) },
+    );
+    expect(patched.status).toBe(403);
+  });
+
+  it("本人は返信を編集・削除でき、他人は 403", async () => {
+    const cookie = await adminLogin();
+    const session = await createSession(cookie);
+    const ctx = await enter(session.code);
+    const other = await enter(session.code);
+    const question = await postQuestion(ctx);
+    const { answerId } = await postReply(ctx, question.id);
+
+    const byOther = await SELF.fetch(`${BASE}/api/s/${ctx.code}/questions/${question.id}/answers/${answerId}`, {
+      method: "DELETE",
+      headers: participantHeaders(other),
+    });
+    expect(byOther.status).toBe(403);
+
+    const patched = await SELF.fetch(`${BASE}/api/s/${ctx.code}/questions/${question.id}/answers/${answerId}`, {
+      method: "PATCH",
+      headers: participantHeaders(ctx),
+      body: JSON.stringify({ body: "編集後の返信" }),
+    });
+    expect(patched.status).toBe(200);
+    expect((await getQuestion(ctx, question.id))?.answers[0].body).toBe("編集後の返信");
+
+    const deleted = await SELF.fetch(`${BASE}/api/s/${ctx.code}/questions/${question.id}/answers/${answerId}`, {
+      method: "DELETE",
+      headers: participantHeaders(ctx),
+    });
+    expect(deleted.status).toBe(200);
+    expect((await getQuestion(ctx, question.id))?.answers.length).toBe(0);
+  });
+
+  it("admin は参加者返信をモデレーション削除できる", async () => {
+    const cookie = await adminLogin();
+    const session = await createSession(cookie);
+    const ctx = await enter(session.code);
+    const question = await postQuestion(ctx);
+    const { answerId } = await postReply(ctx, question.id, "不適切な返信");
+
+    const res = await SELF.fetch(
+      `${BASE}/api/admin/sessions/${session.id}/questions/${question.id}/answers/${answerId}`,
+      { method: "DELETE", headers: { Cookie: cookie } },
+    );
+    expect(res.status).toBe(200);
+    expect((await getQuestion(ctx, question.id))?.answers.length).toBe(0);
+  });
+
+  it("終了セッションへの返信は 403、2000 文字超は 400", async () => {
+    const cookie = await adminLogin();
+    const session = await createSession(cookie);
+    const ctx = await enter(session.code);
+    const question = await postQuestion(ctx);
+
+    const tooLong = await SELF.fetch(`${BASE}/api/s/${ctx.code}/questions/${question.id}/answers`, {
+      method: "POST",
+      headers: participantHeaders(ctx),
+      body: JSON.stringify({ body: "あ".repeat(2001) }),
+    });
+    expect(tooLong.status).toBe(400);
+
+    await SELF.fetch(`${BASE}/api/admin/sessions/${session.id}/end`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    const ended = await SELF.fetch(`${BASE}/api/s/${ctx.code}/questions/${question.id}/answers`, {
+      method: "POST",
+      headers: participantHeaders(ctx),
+      body: JSON.stringify({ body: "終了後の返信" }),
+    });
+    expect(ended.status).toBe(403);
+  });
+
+  it("返信の rate limit(5 件/分)を超えると 429", async () => {
+    const cookie = await adminLogin();
+    const session = await createSession(cookie);
+    const ctx = await enter(session.code);
+    const question = await postQuestion(ctx);
+
+    for (let i = 0; i < 5; i++) {
+      await postReply(ctx, question.id, `返信 ${i + 1}`);
+    }
+    const res = await SELF.fetch(`${BASE}/api/s/${ctx.code}/questions/${question.id}/answers`, {
+      method: "POST",
+      headers: participantHeaders(ctx),
+      body: JSON.stringify({ body: "6 件目" }),
+    });
+    expect(res.status).toBe(429);
   });
 });
 

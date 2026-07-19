@@ -12,7 +12,7 @@ import { errorJson, json, readJson } from "../http";
 import { deleteImage, getImage, uploadImage } from "../images";
 import { broadcast, checkRateLimit } from "../realtime";
 import { verifyTurnstile } from "../turnstile";
-import type { Env, QuestionRow, SessionRow, SurveyRow } from "../types";
+import type { AnswerRow, Env, QuestionRow, SessionRow, SurveyRow } from "../types";
 
 const MAX_QUESTION_LENGTH = 2000;
 
@@ -97,7 +97,7 @@ async function handleQuestions(request: Request, env: Env, session: SessionRow, 
         .all<{ question_id: string }>();
       for (const r of rows.results) myVotes.add(r.question_id);
     }
-    const questions = (await listQuestions(env, session.id)).map(({ tokenHash, ...q }) => ({
+    const questions = (await listQuestions(env, session.id, myHash)).map(({ tokenHash, ...q }) => ({
       ...q,
       isMine: myHash !== null && tokenHash === myHash,
       voted: myVotes.has(q.id),
@@ -158,6 +158,63 @@ async function handleQuestions(request: Request, env: Env, session: SessionRow, 
     await deleteImage(env, session.id, question.image_key);
     await broadcast(env, session.code, "question:deleted", { questionId: question.id });
     return json({ ok: true });
+  }
+
+  // 返信スレッド: 参加者はいつでも返信可(便乗質問・補足)。is_answered は講師回答時のみ変わる
+  if (rest[1] === "answers" && (rest.length === 2 || rest.length === 3)) {
+    if (session.status === "ended") return sessionEnded();
+    const myHash = await anonTokenHash(request);
+    if (!myHash) return errorJson("匿名トークンがありません。ページを再読み込みしてください", 400);
+
+    if (rest.length === 2 && method === "POST") {
+      if (!(await checkRateLimit(env, session.code, request, "answer"))) return rateLimited();
+      const body = await readJson<{ body?: string }>(request);
+      const text = body?.body?.trim() ?? "";
+      if (!text) return errorJson("返信内容を入力してください", 400);
+      if (text.length > MAX_QUESTION_LENGTH) {
+        return errorJson(`返信は ${MAX_QUESTION_LENGTH} 文字以内で入力してください`, 400);
+      }
+      const id = crypto.randomUUID();
+      const now = Date.now();
+      await env.DB.prepare(
+        `INSERT INTO answers (id, question_id, body, author_role, token_hash, created_at, updated_at)
+         VALUES (?, ?, ?, 'participant', ?, ?, ?)`,
+      )
+        .bind(id, question.id, text, myHash, now, now)
+        .run();
+      const updated = await getPublicQuestion(env, question.id);
+      await broadcast(env, session.code, "question:updated", { question: updated });
+      // answerId: 投稿者が「自分の返信」を識別するために返す(broadcast の isMine は常に false)
+      return json({ question: updated, answerId: id }, 201);
+    }
+
+    if (rest.length === 3 && (method === "PATCH" || method === "DELETE")) {
+      const answer = await env.DB.prepare("SELECT * FROM answers WHERE id = ? AND question_id = ?")
+        .bind(rest[2], question.id)
+        .first<AnswerRow>();
+      if (!answer) return errorJson("返信が見つかりません", 404);
+      if (answer.author_role !== "participant" || answer.token_hash !== myHash) {
+        return errorJson("自分の返信のみ編集・削除できます", 403);
+      }
+      if (method === "PATCH") {
+        const body = await readJson<{ body?: string }>(request);
+        const text = body?.body?.trim() ?? "";
+        if (!text) return errorJson("返信内容を入力してください", 400);
+        if (text.length > MAX_QUESTION_LENGTH) {
+          return errorJson(`返信は ${MAX_QUESTION_LENGTH} 文字以内で入力してください`, 400);
+        }
+        await env.DB.prepare("UPDATE answers SET body = ?, updated_at = ? WHERE id = ?")
+          .bind(text, Date.now(), answer.id)
+          .run();
+      } else {
+        await env.DB.prepare("DELETE FROM answers WHERE id = ?").bind(answer.id).run();
+      }
+      const updated = await getPublicQuestion(env, question.id);
+      await broadcast(env, session.code, "question:updated", { question: updated });
+      return json({ question: updated });
+    }
+
+    return errorJson("not found", 404);
   }
 
   if (rest.length === 2 && rest[1] === "vote" && (method === "PUT" || method === "DELETE")) {
