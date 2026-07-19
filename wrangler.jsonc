@@ -3,6 +3,15 @@
 	"name": "anon-qa",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-09-06",
+	// カスタムドメインに一本化するため workers.dev URL は無効化
+	"workers_dev": false,
+	"routes": [
+		{
+			// カスタムドメイン: DNS レコードと証明書は Cloudflare が自動管理
+			"pattern": "qa.maijun.net",
+			"custom_domain": true
+		}
+	],
 	"assets": {
 		"directory": "public",
 		"binding": "ASSETS",
