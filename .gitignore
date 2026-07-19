@@ -1,0 +1,28 @@
+# 依存関係
+node_modules/
+
+# wrangler のローカル状態(ローカル D1/R2 エミュレーションデータ等)
+.wrangler/
+
+# ローカル開発用シークレット(.dev.vars.example は commit する)
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.env
+.env.*
+
+# テスト・ビルド成果物
+coverage/
+dist/
+
+# ログ
+*.log
+npm-debug.log*
+
+# macOS
+.DS_Store
+
+# エディタ
+.vscode/
+.idea/
+*.swp

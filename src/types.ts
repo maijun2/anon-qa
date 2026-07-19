@@ -1,0 +1,69 @@
+export interface Env {
+  DB: D1Database;
+  IMAGES: R2Bucket;
+  SESSION_DO: DurableObjectNamespace;
+  ASSETS: Fetcher;
+  /** wrangler secret put で登録 */
+  ADMIN_PASSWORD: string;
+  TURNSTILE_SECRET_KEY: string;
+  APP_SECRET: string;
+  /** 公開情報(wrangler.jsonc の vars) */
+  TURNSTILE_SITE_KEY: string;
+}
+
+/** セッションの保持期間。作成から 30 日で Cron が自動削除する */
+export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+export interface SessionRow {
+  id: string;
+  code: string;
+  course_name: string;
+  held_on: string;
+  status: "active" | "ended";
+  created_at: number;
+}
+
+export interface QuestionRow {
+  id: string;
+  session_id: string;
+  body: string;
+  image_key: string | null;
+  token_hash: string;
+  is_answered: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface AnswerRow {
+  id: string;
+  question_id: string;
+  body: string;
+  created_at: number;
+}
+
+export interface MaterialRow {
+  id: string;
+  session_id: string;
+  module: string;
+  title: string;
+  url: string | null;
+  body: string | null;
+  sort_order: number;
+}
+
+export interface SurveyRow {
+  id: string;
+  session_id: string;
+  title: string;
+  is_multi: number;
+  status: "draft" | "published" | "closed";
+  sort_order: number;
+  created_at: number;
+}
+
+export interface SurveyOptionRow {
+  id: string;
+  survey_id: string;
+  label: string;
+  sort_order: number;
+}

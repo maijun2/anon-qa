@@ -1,0 +1,52 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "anon-qa",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-06",
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/s/*", "/admin", "/admin/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "anon-qa-db",
+      // scripts/setup.sh で作成した D1 の database_id に置き換える(ローカル開発はこのままで可)
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "IMAGES",
+      "bucket_name": "anon-qa-images"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SESSION_DO",
+        "class_name": "SessionDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["SessionDO"]
+    }
+  ],
+  "triggers": {
+    // JST 12:00 に期限切れセッション(作成から 30 日)を削除
+    "crons": ["0 3 * * *"]
+  },
+  "vars": {
+    // Turnstile の site key は公開情報。デフォルトは常に成功するテストキー。
+    // 本番は scripts/setup.sh で作成した widget の site key に置き換える
+    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA"
+  },
+  "observability": {
+    // 匿名性優先: リクエストログを収集しない
+    "enabled": false
+  }
+}

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>セッション管理 - 匿名Q&A</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="container container-wide app-header-inner">
+      <div>
+        <h1 id="course-name" class="app-title">読み込み中…</h1>
+        <span class="muted small">
+          コード: <span id="session-code" class="session-code"></span>
+          <button id="copy-url-btn" class="btn btn-ghost btn-small">参加URLをコピー</button>
+          <span id="session-status"></span>
+        </span>
+      </div>
+      <div class="actions-inline">
+        <span id="conn-status" class="conn-status" hidden>再接続中…</span>
+        <a id="present-link" class="btn btn-ghost btn-small" target="_blank" rel="noopener">投影モード</a>
+        <button id="end-session-btn" class="btn btn-ghost btn-small">セッション終了</button>
+        <a class="btn btn-ghost btn-small" href="/admin/dashboard">一覧へ</a>
+      </div>
+    </div>
+  </header>
+
+  <nav class="tabs container container-wide" role="tablist" aria-label="管理メニュー">
+    <button class="tab active" data-tab="questions" role="tab" aria-selected="true">質問管理</button>
+    <button class="tab" data-tab="materials" role="tab" aria-selected="false">参考情報</button>
+    <button class="tab" data-tab="surveys" role="tab" aria-selected="false">アンケート</button>
+  </nav>
+
+  <main class="container container-wide" style="padding-bottom: 48px;">
+    <section id="tab-questions" class="tab-panel">
+      <div class="list-header">
+        <h2>質問一覧</h2>
+        <div class="sort-toggle" role="group" aria-label="並び順">
+          <button class="btn btn-ghost btn-small sort-btn active" data-sort="new">新着順</button>
+          <button class="btn btn-ghost btn-small sort-btn" data-sort="votes">いいね順</button>
+        </div>
+      </div>
+      <div id="question-list" class="stack"></div>
+      <p id="question-empty" class="muted" hidden>質問はまだありません。</p>
+    </section>
+
+    <section id="tab-materials" class="tab-panel" hidden>
+      <form id="material-form" class="card">
+        <h2>参考情報を追加</h2>
+        <div class="form-row" style="margin: 0 0 8px;">
+          <input id="material-module" class="input" placeholder="Module(例: Module 1)" style="flex: 1;">
+          <input id="material-title" class="input" placeholder="タイトル(必須)" style="flex: 2;" required>
+        </div>
+        <input id="material-url" class="input" placeholder="URL(任意)" style="margin-bottom: 8px;">
+        <textarea id="material-body" class="textarea" rows="2" placeholder="メモ(任意)"></textarea>
+        <div class="form-row">
+          <span></span>
+          <button type="submit" class="btn btn-primary">追加</button>
+        </div>
+      </form>
+      <div id="material-list" class="stack" style="margin-top: 12px;"></div>
+      <p id="material-empty" class="muted" hidden>参考情報はまだありません。</p>
+    </section>
+
+    <section id="tab-surveys" class="tab-panel" hidden>
+      <form id="survey-form" class="card">
+        <h2>アンケートを作成</h2>
+        <div class="form-row" style="margin: 0 0 8px;">
+          <input id="survey-title" class="input" placeholder="質問文(必須)" style="flex: 2;" required>
+          <label class="small" style="white-space: nowrap;">
+            <input type="checkbox" id="survey-multi"> 複数選択可
+          </label>
+        </div>
+        <textarea id="survey-options" class="textarea" rows="3" placeholder="選択肢(1 行に 1 つ、2 つ以上)" required></textarea>
+        <div class="form-row">
+          <span></span>
+          <button type="submit" class="btn btn-primary">作成(下書き)</button>
+        </div>
+      </form>
+      <div id="survey-list" class="stack" style="margin-top: 12px;"></div>
+      <p id="survey-empty" class="muted" hidden>アンケートはまだありません。</p>
+    </section>
+  </main>
+
+  <script src="/js/common.js"></script>
+  <script src="/js/admin-common.js"></script>
+  <script src="/js/admin-session.js"></script>
+</body>
+</html>

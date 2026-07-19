@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>投影モード - 匿名Q&A</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="present">
+  <div class="container">
+    <header class="present-header">
+      <h1 id="course-name">読み込み中…</h1>
+      <div class="present-controls">
+        <span>参加コード: <span id="session-code" class="session-code"></span></span>
+        <div class="sort-toggle" role="group" aria-label="並び順">
+          <button class="btn btn-ghost btn-small sort-btn active" data-sort="votes">いいね順</button>
+          <button class="btn btn-ghost btn-small sort-btn" data-sort="new">新着順</button>
+        </div>
+        <label class="small"><input type="checkbox" id="show-answered"> 回答済みも表示</label>
+        <span id="conn-status" class="conn-status" hidden>再接続中…</span>
+      </div>
+    </header>
+
+    <div class="present-columns">
+      <section>
+        <div id="question-list" class="stack"></div>
+        <p id="question-empty" class="muted" hidden>質問はまだありません。</p>
+      </section>
+      <section>
+        <div id="survey-list" class="stack"></div>
+      </section>
+    </div>
+  </div>
+
+  <script src="/js/common.js"></script>
+  <script src="/js/admin-common.js"></script>
+  <script src="/js/present.js"></script>
+</body>
+</html>
