@@ -20,6 +20,11 @@
   box-sizing: border-box;
 }
 
+/* display 指定を持つ要素(.image-preview 等)でも hidden 属性を必ず有効にする */
+[hidden] {
+  display: none !important;
+}
+
 html {
   -webkit-text-size-adjust: 100%;
 }
