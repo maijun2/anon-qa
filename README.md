@@ -25,15 +25,53 @@ npm test       # vitest (@cloudflare/vitest-pool-workers)
 
 ## 初回セットアップ(本番)
 
-1. Cloudflare アカウントで `npx wrangler login`
+1. 環境変数を設定(未設定だと setup.sh は即エラー終了します)
+
+   ```bash
+   export CLOUDFLARE_ACCOUNT_ID=<アカウント ID>   # ダッシュボード右側 or `npx wrangler whoami`
+   export CLOUDFLARE_API_TOKEN=<API トークン>     # Workers/D1/R2/Turnstile の編集権限が必要
+   ```
+
 2. `bash scripts/setup.sh`
    - D1 database / R2 bucket / Turnstile widget を作成
    - `ADMIN_PASSWORD` / `TURNSTILE_SECRET_KEY` / `APP_SECRET` を secret 登録
+   - 冪等なので何度実行しても安全(作成済みリソース・登録済み secret はスキップ)
 3. 出力された `database_id` と Turnstile site key を `wrangler.jsonc` に反映して commit
 4. GitHub リポジトリの Secrets に `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` を登録
 5. `main` へ push → GitHub Actions が D1 migrations apply → `wrangler deploy` を実行
 
 以降の変更はすべて git push のみで反映されます。手動デプロイは緊急時のみ `npm run deploy`。
+
+### このリポジトリを fork して使う場合
+
+`wrangler.jsonc` の以下はこのリポジトリのオーナーのアカウント固有値なので、自分の値に書き換えてください(いずれもシークレットではなく公開可能な値です)。
+
+| 項目 | 対応 |
+|---|---|
+| `routes`(カスタムドメイン `qa.maijun.net`) | 自分のドメインに変更。ドメインがなければ `routes` を削除し `workers_dev` を `true` に |
+| `d1_databases[0].database_id` | setup.sh が出力した自分の D1 の ID に置き換え |
+| `vars.TURNSTILE_SITE_KEY` | 自分の Turnstile widget の site key に置き換え |
+
+Turnstile widget の許可ドメイン(ダッシュボード → Turnstile → Domains)に運用するホスト名を登録するのを忘れずに。
+
+## 使い方
+
+### 講師(管理者)
+
+1. `/admin` に `ADMIN_PASSWORD` でログイン
+2. ダッシュボードでセッションを作成 → アクセスコード(例: `AB3D5F`)が発行される
+3. 参加者にコードまたは入室 URL(`/?code=AB3D5F`)を共有(QR コード等で案内)
+4. `/admin/s/:id` で質問の確認・回答・回答済み管理、参考情報の共有、アンケートの配信を行う
+5. スクリーン投影には `/admin/s/:id/present`(投影モード)を使用
+
+### 参加者(受講者)
+
+1. トップページでアクセスコードを入力して入室(Turnstile 検証あり、初回のみ)
+2. 質問を投稿(完全匿名、画像はファイル選択・ペースト・ドラッグ&ドロップで添付可、5MB まで)
+3. 他の人の質問に「いいね」投票、自分の質問は編集・削除が可能
+4. 講師の回答・参考情報・アンケートはリアルタイムに反映される
+
+セッションは作成から 30 日で自動削除されます(質問・画像を含む)。
 
 ## 画面
 
