@@ -1,4 +1,5 @@
-import { SELF, fetchMock } from "cloudflare:test";
+import { SELF } from "cloudflare:test";
+import { vi } from "vitest";
 
 export const BASE = "https://example.com";
 export const ADMIN_PASSWORD = "test-admin-password";
@@ -6,18 +7,18 @@ export const ADMIN_PASSWORD = "test-admin-password";
 /**
  * Turnstile siteverify をモックする。トークンに "bad" を含む場合のみ失敗を返す。
  * 各テストファイルの beforeAll で呼ぶこと。
+ * (vitest-pool-workers v0.18 で cloudflare:test の fetchMock が廃止されたため
+ *  globalThis.fetch を直接スタブする。main worker はテストと同一 isolate で動く)
  */
 export function mockTurnstile(): void {
-  fetchMock.activate();
-  fetchMock.disableNetConnect();
-  fetchMock
-    .get("https://challenges.cloudflare.com")
-    .intercept({ method: "POST", path: "/turnstile/v0/siteverify" })
-    .reply(200, (opts) => {
-      const body = typeof opts.body === "string" ? opts.body : "";
-      return JSON.stringify({ success: !body.includes("bad") });
-    }, { headers: { "Content-Type": "application/json" } })
-    .persist();
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url !== "https://challenges.cloudflare.com/turnstile/v0/siteverify") {
+      throw new Error(`unexpected external fetch in test: ${url}`);
+    }
+    const body = typeof init?.body === "string" ? init.body : "";
+    return Response.json({ success: !body.includes("bad") });
+  });
 }
 
 export async function adminLogin(): Promise<string> {
