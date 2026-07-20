@@ -303,30 +303,41 @@ describe("admin 認証", () => {
 });
 
 describe("SessionDO rate limit バケットの GC", () => {
-  it("閾値超過で GC が走っても、有効期限内のカウンタはリセットされない", async () => {
-    const stub = env.SESSION_DO.get(env.SESSION_DO.idFromName("gc-test-session"));
-    const record = (key: string) =>
-      stub.fetch("https://session-do/ratelimit", {
-        method: "POST",
-        body: JSON.stringify({ key, limit: 1, windowMs: 60_000, mode: "record" }),
-      });
-    const check = (key: string) =>
-      stub
-        .fetch("https://session-do/ratelimit", {
+  // GC の発火条件(size > 5000)を満たすため 5001 件の DO fetch を発行しており、
+  // 実行環境によってはデフォルトのテストタイムアウト(5000ms)に収まらないことがあるため延長する
+  it(
+    "閾値超過で GC が走っても、有効期限内のカウンタはリセットされない",
+    { timeout: 30_000 },
+    async () => {
+      const stub = env.SESSION_DO.get(env.SESSION_DO.idFromName("gc-test-session"));
+      const record = (key: string) =>
+        stub.fetch("https://session-do/ratelimit", {
           method: "POST",
-          body: JSON.stringify({ key, limit: 1, windowMs: 60_000, mode: "check" }),
-        })
-        .then((r) => r.json() as Promise<{ allowed: boolean }>);
+          body: JSON.stringify({ key, limit: 1, windowMs: 60_000, mode: "record" }),
+        });
+      const check = (key: string) =>
+        stub
+          .fetch("https://session-do/ratelimit", {
+            method: "POST",
+            body: JSON.stringify({ key, limit: 1, windowMs: 60_000, mode: "check" }),
+          })
+          .then((r) => r.json() as Promise<{ allowed: boolean }>);
 
-    // 直前に失敗を重ねた login カウンタを想定
-    await record("login:keep-me");
+      // 直前に失敗を重ねた login カウンタを想定
+      await record("login:keep-me");
 
-    // 大量の別キーを追加して GC の発火条件(size > 5000)を満たす
-    await Promise.all(Array.from({ length: 5001 }, (_, i) => record(`dummy:${i}`)));
+      // 大量の別キーを追加して GC の発火条件(size > 5000)を満たす。
+      // 5001 件を一度に Promise.all すると実行環境によって重くなるため、チャンクに分けて投げる
+      const dummyKeys = Array.from({ length: 5001 }, (_, i) => `dummy:${i}`);
+      const chunkSize = 500;
+      for (let i = 0; i < dummyKeys.length; i += chunkSize) {
+        await Promise.all(dummyKeys.slice(i, i + chunkSize).map(record));
+      }
 
-    // 旧実装(buckets.clear())なら keep-me も消えて allowed: true に戻ってしまう
-    expect((await check("login:keep-me")).allowed).toBe(false);
-  });
+      // 旧実装(buckets.clear())なら keep-me も消えて allowed: true に戻ってしまう
+      expect((await check("login:keep-me")).allowed).toBe(false);
+    },
+  );
 });
 
 describe("講師回答・回答済み管理", () => {
