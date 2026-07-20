@@ -28,12 +28,15 @@ export async function handleAdminApi(request: Request, env: Env, rest: string[])
   const method = request.method;
 
   if (rest[0] === "login" && method === "POST") {
+    // 比較の前に制限を確認(記録はしない)。超過中はパスワードの正誤に関わらず
+    // 比較自体を行わず 429 で弾く(でないと正解を引かれた瞬間に制限を回避できてしまう)
+    if (!(await checkRateLimit(env, ADMIN_RATE_LIMIT_KEY, request, "login", "check"))) {
+      return errorJson("試行回数が多すぎます。しばらく待ってから再試行してください", 429);
+    }
     const body = await readJson<{ password?: string }>(request);
     if (!body?.password || !timingSafeEqualStr(body.password, env.ADMIN_PASSWORD)) {
       // 失敗時のみカウント。正規ログインは制限対象外(連続開催でも支障が出ない)
-      if (!(await checkRateLimit(env, ADMIN_RATE_LIMIT_KEY, request, "login"))) {
-        return errorJson("試行回数が多すぎます。しばらく待ってから再試行してください", 429);
-      }
+      await checkRateLimit(env, ADMIN_RATE_LIMIT_KEY, request, "login", "record");
       return errorJson("パスワードが違います", 401);
     }
     return json({ ok: true }, 200, { "Set-Cookie": await issueAdminCookie(env) });

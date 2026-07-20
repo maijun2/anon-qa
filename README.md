@@ -84,6 +84,19 @@ Turnstile widget の許可ドメイン(ダッシュボード → Turnstile → D
 | `/admin/s/:id` | セッション管理(質問 / 参考情報 / アンケート配信) |
 | `/admin/s/:id/present` | 投影モード(大画面表示) |
 
+## 運用: 認証情報の失効(ローテーション)
+
+- admin セッション Cookie はサーバ側で個別に失効できません(HMAC 署名トークンで最長 12 時間有効)。
+  `/api/admin/logout` はクライアント側の Cookie 削除のみで、発行済みトークン自体は無効になりません。
+- 漏洩が疑われる場合は、速やかに以下を実施してください。
+  1. `npx wrangler secret put APP_SECRET` で新しいランダム値に差し替える
+     → 発行済みの admin Cookie と参加者の入室トークンが**両方とも**無効になります(署名検証が
+     すべて `APP_SECRET` に依存するため)。参加者は Turnstile 再検証を伴う再入室が必要になります。
+  2. `npx wrangler secret put ADMIN_PASSWORD` で `ADMIN_PASSWORD` を変更する
+     → 次回ログイン以降は新パスワードが必要になりますが、**このステップだけでは発行済みの
+     admin Cookie は失効しません**(Cookie の署名は `APP_SECRET` のみに依存するため)。
+     Cookie も失効させたい場合は上記 1 も併せて実施してください。
+
 ## 匿名性について
 
 - IP アドレス・User-Agent は DB にもログにも保存しない(rate limit は DO メモリ内カウンタのみ)

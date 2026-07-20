@@ -1,7 +1,9 @@
 import { SELF, env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { cleanupExpiredSessions } from "../src/cron";
+import { ADMIN_RATE_LIMIT_KEY } from "../src/realtime";
 import {
+  ADMIN_PASSWORD,
   BASE,
   adminLogin,
   createSession,
@@ -246,11 +248,17 @@ describe("admin 認証", () => {
     expect(me.status).toBe(200);
   });
 
-  it("パスワード誤りを連続すると 429 になるが、正しいログインは制限されない", async () => {
+  it("パスワード誤りを連続すると 429 になり、制限超過中は正しいパスワードでも比較されず 429 のまま", async () => {
+    // このバケットは IP 単位(login:${IP})で、テストの SELF.fetch は CF-Connecting-IP
+    // ヘッダを明示しない限り全テスト共通の ambient IP を使う。ここでは専用のダミー IP
+    // (TEST-NET-3, RFC 5737)を使い、他の adminLogin() ヘルパー呼び出しが使う ambient IP の
+    // バケットを汚染しない(汚染すると、このテスト以降の ~15 箇所の adminLogin() が
+    // 軒並み 429 になってしまう)。
+    const headers = { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.10" };
     const wrongLogin = () =>
       SELF.fetch(`${BASE}/api/admin/login`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ password: "still-wrong" }),
       });
 
@@ -260,9 +268,61 @@ describe("admin 認証", () => {
     }
     expect(saw429).toBe(true);
 
-    // 正規パスワードは失敗カウントの対象外なので、制限中でもログインできる
-    const cookie = await adminLogin();
-    expect(cookie).toContain("admin_session=");
+    // 制限超過中は正しいパスワードでも比較自体が行われず 429(比較を先に行う旧実装では
+    // ここが素通りしてしまっていた)
+    const res = await SELF.fetch(`${BASE}/api/admin/login`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ password: ADMIN_PASSWORD }),
+    });
+    expect(res.status).toBe(429);
+  });
+
+  it("rate limit の window 経過後はカウンタがリセットされ、再びログインできる", async () => {
+    // admin login の本番コードが使うのと同じ DO・同じ /ratelimit エンドポイントを、
+    // 実時間 60 秒を待たずに検証するため短い windowMs で直接叩く。
+    const stub = env.SESSION_DO.get(env.SESSION_DO.idFromName(ADMIN_RATE_LIMIT_KEY));
+    const call = (mode: "check" | "record") =>
+      stub
+        .fetch("https://session-do/ratelimit", {
+          method: "POST",
+          body: JSON.stringify({ key: "login:window-test", limit: 1, windowMs: 50, mode }),
+        })
+        .then((r) => r.json() as Promise<{ allowed: boolean }>);
+
+    expect((await call("check")).allowed).toBe(true);
+    await call("record");
+    expect((await call("check")).allowed).toBe(false);
+
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect((await call("check")).allowed).toBe(true);
+  });
+});
+
+describe("SessionDO rate limit バケットの GC", () => {
+  it("閾値超過で GC が走っても、有効期限内のカウンタはリセットされない", async () => {
+    const stub = env.SESSION_DO.get(env.SESSION_DO.idFromName("gc-test-session"));
+    const record = (key: string) =>
+      stub.fetch("https://session-do/ratelimit", {
+        method: "POST",
+        body: JSON.stringify({ key, limit: 1, windowMs: 60_000, mode: "record" }),
+      });
+    const check = (key: string) =>
+      stub
+        .fetch("https://session-do/ratelimit", {
+          method: "POST",
+          body: JSON.stringify({ key, limit: 1, windowMs: 60_000, mode: "check" }),
+        })
+        .then((r) => r.json() as Promise<{ allowed: boolean }>);
+
+    // 直前に失敗を重ねた login カウンタを想定
+    await record("login:keep-me");
+
+    // 大量の別キーを追加して GC の発火条件(size > 5000)を満たす
+    await Promise.all(Array.from({ length: 5001 }, (_, i) => record(`dummy:${i}`)));
+
+    // 旧実装(buckets.clear())なら keep-me も消えて allowed: true に戻ってしまう
+    expect((await check("login:keep-me")).allowed).toBe(false);
   });
 });
 
