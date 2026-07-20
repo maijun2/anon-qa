@@ -104,6 +104,11 @@ a { color: var(--accent); }
 
 .app-title { margin: 0; font-size: 1.1rem; }
 
+.app-header-actions { display: flex; align-items: center; gap: 8px; }
+
+/* 通知音トグル(絵文字ボタン) */
+.sound-toggle { min-width: 44px; font-size: 1.1rem; line-height: 1; padding: 8px 10px; }
+
 .conn-status {
   background: #fef3c7;
   color: #92400e;
@@ -316,6 +321,15 @@ label { font-size: 0.9rem; }
 
 .answer p { margin: 2px 0; white-space: pre-wrap; word-break: break-word; }
 
+.answer-image {
+  display: block;
+  max-width: 100%;
+  max-height: 160px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  margin: 4px 0;
+}
+
 .answer-label {
   font-size: 0.75rem;
   font-weight: 700;
@@ -476,6 +490,7 @@ body.present {
 .present .question-body { font-size: 1.1em; font-weight: 600; color: #111827; }
 .present .vote-display { font-size: 0.8em; color: var(--accent-strong); font-weight: 700; }
 .present .answer { font-size: 0.75em; }
+.present .answer-image { max-height: 320px; }
 .present .bar-track { height: 1em; }
 .present .survey-result-label { font-size: 0.9em; font-weight: 600; }
 

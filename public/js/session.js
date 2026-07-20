@@ -23,6 +23,7 @@
     surveys: [],
     sort: "new",
     pendingImage: null,
+    replyPendingImage: null,
     editingId: null,
     replyingId: null,
     editingAnswerId: null,
@@ -62,6 +63,7 @@
         onMessage: handleWsMessage,
         onStatus: (s) => { $("conn-status").hidden = s === "open"; },
       });
+      AnonQA.initSoundToggle($("sound-toggle"));
     } catch (e) {
       // 401 は api() 内で入室ページへリダイレクト済み
     }
@@ -108,7 +110,13 @@
   function handleWsMessage(msg) {
     const p = msg.payload || {};
     switch (msg.type) {
-      case "question:new":
+      case "question:new": {
+        const isNew = !state.questions.some((x) => x.id === p.question.id);
+        upsertQuestion(p.question);
+        renderQuestions();
+        if (isNew) AnonQA.playNotify();
+        break;
+      }
       case "question:updated":
         upsertQuestion(p.question);
         renderQuestions();
@@ -227,10 +235,21 @@
         ${q.answers.length ? `<div class="answers">${q.answers.map((a) => answerHtml(a)).join("")}</div>` : ""}
         ${state.replyingId === q.id ? `
           <div class="field reply-form">
-            <textarea class="textarea reply-input" rows="2" placeholder="返信を入力(匿名で投稿されます)"></textarea>
-            <div class="admin-item-actions">
-              <button class="btn btn-primary btn-small" data-action="submit-reply">返信を送信</button>
-              <button class="btn btn-ghost btn-small" data-action="cancel-reply">キャンセル</button>
+            <textarea class="textarea reply-input" rows="2" placeholder="返信を入力(匿名で投稿されます。画像の貼り付け・添付も可能)"></textarea>
+            ${state.replyPendingImage ? `
+              <div class="image-preview">
+                <img src="${state.replyPendingImage.previewUrl}" alt="添付画像プレビュー">
+                <button type="button" class="btn btn-ghost btn-small" data-action="reply-image-remove">添付を取り消す</button>
+              </div>` : ""}
+            <div class="form-row">
+              <label class="btn btn-ghost btn-small file-label">
+                画像を添付
+                <input type="file" class="reply-image-input" accept="image/png,image/jpeg,image/gif,image/webp">
+              </label>
+              <div class="admin-item-actions">
+                <button class="btn btn-primary btn-small" data-action="submit-reply">返信を送信</button>
+                <button class="btn btn-ghost btn-small" data-action="cancel-reply">キャンセル</button>
+              </div>
             </div>
           </div>` : ""}
         <div class="question-actions">
@@ -266,7 +285,8 @@
       <div class="answer${isInstructor ? "" : " answer-participant"}" data-answer-id="${esc(a.id)}">
         <span class="answer-label${isInstructor ? "" : " answer-label-participant"}">${isInstructor ? "講師" : "参加者"}</span>
         ${a.isMine ? '<span class="badge badge-mine">自分の返信</span>' : ""}
-        <p>${AnonQA.linkify(a.body)}</p>
+        ${a.body ? `<p>${AnonQA.linkify(a.body)}</p>` : ""}
+        ${a.imageKey ? `<a href="${imageUrl(a.imageKey)}" target="_blank" rel="noopener"><img class="answer-image" src="${imageUrl(a.imageKey)}" alt="添付画像" loading="lazy"></a>` : ""}
         <span class="muted small">${AnonQA.formatJst(a.createdAt)}${a.updatedAt > a.createdAt ? "(編集済み)" : ""}</span>
         ${editable ? `
           <button class="btn btn-ghost btn-small" data-action="edit-answer">編集</button>
@@ -303,11 +323,13 @@
       if (action === "delete") deleteQuestion(q);
       if (action === "reply") {
         state.replyingId = q.id;
+        clearReplyPendingImage();
         renderQuestions();
         const input = document.querySelector(`[data-id="${CSS.escape(q.id)}"] .reply-input`);
         if (input) input.focus();
       }
-      if (action === "cancel-reply") { state.replyingId = null; renderQuestions(); }
+      if (action === "cancel-reply") { state.replyingId = null; clearReplyPendingImage(); renderQuestions(); }
+      if (action === "reply-image-remove") { clearReplyPendingImage(); renderQuestions(); }
       if (action === "submit-reply") submitReply(q, card.querySelector(".reply-input").value);
       const answerEl = btn.closest("[data-answer-id]");
       const answerId = answerEl ? answerEl.dataset.answerId : null;
@@ -316,19 +338,69 @@
       if (action === "save-edit-answer") saveAnswerEdit(q, answerId, answerEl.querySelector(".answer-edit-input").value);
       if (action === "delete-answer") deleteAnswer(q, answerId);
     });
+
+    // 返信フォームの画像添付(ファイル選択)
+    $(listId).addEventListener("change", (ev) => {
+      const input = ev.target.closest(".reply-image-input");
+      if (!input || !input.files || !input.files[0]) return;
+      setReplyPendingImage(input.files[0]);
+      input.value = "";
+    });
+
+    // 返信フォームへの画像貼り付け
+    $(listId).addEventListener("paste", (ev) => {
+      if (!ev.target.closest(".reply-input")) return;
+      const items = ev.clipboardData && ev.clipboardData.items;
+      if (!items) return;
+      for (const item of items) {
+        if (isAllowedImage(item.type)) {
+          ev.preventDefault();
+          setReplyPendingImage(item.getAsFile());
+          return;
+        }
+      }
+    });
   });
+
+  function setReplyPendingImage(file) {
+    if (!file) return;
+    if (!isAllowedImage(file.type)) {
+      alert("画像は PNG / JPEG / GIF / WebP 形式のみ添付できます");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert("画像は 1 枚 5MB 以下にしてください");
+      return;
+    }
+    clearReplyPendingImage();
+    state.replyPendingImage = { file, previewUrl: URL.createObjectURL(file) };
+    renderQuestions();
+  }
+
+  function clearReplyPendingImage() {
+    if (state.replyPendingImage) URL.revokeObjectURL(state.replyPendingImage.previewUrl);
+    state.replyPendingImage = null;
+  }
 
   // ---------- 返信スレッド ----------
   async function submitReply(q, text) {
     const body = text.trim();
-    if (!body) return;
+    const pending = state.replyPendingImage;
+    if (!body && !pending) return;
     try {
+      let imageKey;
+      if (pending) {
+        const form = new FormData();
+        form.append("file", pending.file);
+        imageKey = (await AnonQA.api(code, "/images", { method: "POST", body: form })).imageKey;
+      }
       const res = await AnonQA.api(code, `/questions/${q.id}/answers`, {
         method: "POST",
-        body: JSON.stringify({ body }),
+        body: JSON.stringify({ body, imageKey }),
       });
       state.myAnswerIds.add(res.answerId);
       state.replyingId = null;
+      clearReplyPendingImage();
       upsertQuestion(res.question);
     } catch (e) {
       alert(e.message);

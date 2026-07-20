@@ -378,6 +378,72 @@ describe("回答スレッド(参加者返信)", () => {
     expect((await getQuestion(ctx, question.id))?.answers.length).toBe(0);
   });
 
+  it("参加者は画像付き(本文空も可)で返信でき、画像は削除時に R2 からも消える", async () => {
+    const cookie = await adminLogin();
+    const session = await createSession(cookie);
+    const ctx = await enter(session.code);
+    const question = await postQuestion(ctx);
+
+    // 返信用の画像をアップロード
+    const form = new FormData();
+    form.append("file", new File([new Uint8Array([137, 80, 78, 71])], "a.png", { type: "image/png" }));
+    const { imageKey } = (await (
+      await SELF.fetch(`${BASE}/api/s/${ctx.code}/images`, {
+        method: "POST",
+        headers: { "X-Entry-Token": ctx.entryToken, "X-Anon-Token": ctx.anonToken },
+        body: form,
+      })
+    ).json()) as { imageKey: string };
+
+    // 本文なし・画像のみの返信が 201
+    const res = await SELF.fetch(`${BASE}/api/s/${ctx.code}/questions/${question.id}/answers`, {
+      method: "POST",
+      headers: participantHeaders(ctx),
+      body: JSON.stringify({ imageKey }),
+    });
+    expect(res.status).toBe(201);
+    const { answerId, question: q } = (await res.json()) as {
+      answerId: string;
+      question: { answers: Array<{ id: string; imageKey: string | null }> };
+    };
+    expect(q.answers[0].imageKey).toBe(imageKey);
+    expect(await env.IMAGES.get(`${session.id}/${imageKey}`)).not.toBeNull();
+
+    // 返信削除で R2 の画像も消える
+    const del = await SELF.fetch(`${BASE}/api/s/${ctx.code}/questions/${question.id}/answers/${answerId}`, {
+      method: "DELETE",
+      headers: participantHeaders(ctx),
+    });
+    expect(del.status).toBe(200);
+    expect(await env.IMAGES.get(`${session.id}/${imageKey}`)).toBeNull();
+  });
+
+  it("講師も admin 画像アップロード経由で画像付き回答ができる", async () => {
+    const cookie = await adminLogin();
+    const session = await createSession(cookie);
+    const ctx = await enter(session.code);
+    const question = await postQuestion(ctx);
+
+    const form = new FormData();
+    form.append("file", new File([new Uint8Array([137, 80, 78, 71])], "a.png", { type: "image/png" }));
+    const up = await SELF.fetch(`${BASE}/api/admin/sessions/${session.id}/images`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+      body: form,
+    });
+    expect(up.status).toBe(200);
+    const { imageKey } = (await up.json()) as { imageKey: string };
+
+    const res = await SELF.fetch(`${BASE}/api/admin/sessions/${session.id}/questions/${question.id}/answers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ imageKey }),
+    });
+    expect(res.status).toBe(201);
+    const data = (await res.json()) as { question: { answers: Array<{ imageKey: string | null; authorRole: string }> } };
+    expect(data.question.answers[0]).toMatchObject({ imageKey, authorRole: "instructor" });
+  });
+
   it("admin は参加者返信をモデレーション削除できる", async () => {
     const cookie = await adminLogin();
     const session = await createSession(cookie);

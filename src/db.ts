@@ -24,6 +24,7 @@ export function publicSession(s: SessionRow) {
 export interface PublicAnswer {
   id: string;
   body: string;
+  imageKey: string | null;
   authorRole: "instructor" | "participant";
   /** 閲覧者自身の返信か。ブロードキャスト時は常に false(フロントが復元する) */
   isMine: boolean;
@@ -36,6 +37,7 @@ function toPublicAnswer(a: AnswerRow, myHash: string | null): PublicAnswer {
   return {
     id: a.id,
     body: a.body,
+    imageKey: a.image_key,
     authorRole: a.author_role,
     isMine: a.token_hash !== null && a.token_hash === myHash,
     createdAt: a.created_at,

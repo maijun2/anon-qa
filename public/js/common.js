@@ -60,6 +60,72 @@ window.AnonQA = (() => {
     });
   }
 
+  // ---------- 通知音(Web Audio で合成。外部アセット不要) ----------
+  const SOUND_KEY = "anonqa:sound"; // "off" のときのみ無効(既定 ON)
+  let audioCtx = null;
+
+  function soundEnabled() {
+    return localStorage.getItem(SOUND_KEY) !== "off";
+  }
+
+  function setSoundEnabled(on) {
+    localStorage.setItem(SOUND_KEY, on ? "on" : "off");
+  }
+
+  function ensureAudio() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!audioCtx) audioCtx = new AC();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    return audioCtx;
+  }
+
+  // ブラウザの autoplay 制限対策: 初回ユーザー操作で AudioContext を用意する
+  function primeAudioOnce() {
+    ensureAudio();
+    document.removeEventListener("pointerdown", primeAudioOnce);
+    document.removeEventListener("keydown", primeAudioOnce);
+  }
+  document.addEventListener("pointerdown", primeAudioOnce, { once: true });
+  document.addEventListener("keydown", primeAudioOnce, { once: true });
+
+  // 新着通知の短いポップ音(2 音の上昇)。soundEnabled() が false なら鳴らさない
+  function playNotify() {
+    if (!soundEnabled()) return;
+    const ctx = ensureAudio();
+    if (!ctx || ctx.state !== "running") return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, now);
+    osc.frequency.exponentialRampToValueAtTime(1320, now + 0.08);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.25, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
+    osc.start(now);
+    osc.stop(now + 0.32);
+  }
+
+  // ミュート切替ボタンの初期化(3 ページ共通)。🔔 = ON / 🔕 = OFF
+  function initSoundToggle(button) {
+    if (!button) return;
+    const reflect = () => {
+      const on = soundEnabled();
+      button.textContent = on ? "🔔" : "🔕";
+      button.setAttribute("aria-pressed", String(on));
+      button.title = on ? "通知音: ON(クリックでミュート)" : "通知音: OFF(クリックで有効化)";
+    };
+    button.addEventListener("click", () => {
+      setSoundEnabled(!soundEnabled());
+      if (soundEnabled()) playNotify(); // 有効化時に確認音
+      reflect();
+    });
+    reflect();
+  }
+
   // 保存は UTC(epoch ms)、表示は JST
   function formatJst(ms) {
     return new Date(ms).toLocaleString("ja-JP", {
@@ -121,5 +187,8 @@ window.AnonQA = (() => {
     };
   }
 
-  return { anonToken, getEntryToken, setEntryToken, api, escapeHtml, linkify, formatJst, formatJstDate, connectWs };
+  return {
+    anonToken, getEntryToken, setEntryToken, api, escapeHtml, linkify, formatJst, formatJstDate, connectWs,
+    playNotify, soundEnabled, setSoundEnabled, initSoundToggle,
+  };
 })();
