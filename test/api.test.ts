@@ -282,11 +282,14 @@ describe("admin 認証", () => {
     // admin login の本番コードが使うのと同じ DO・同じ /ratelimit エンドポイントを、
     // 実時間 60 秒を待たずに検証するため短い windowMs で直接叩く。
     const stub = env.SESSION_DO.get(env.SESSION_DO.idFromName(ADMIN_RATE_LIMIT_KEY));
+    // windowMs は 50ms だと flaky だった: record 直後の check までに CI の cold start 等で
+    // 50ms 以上かかると hit が期限切れ扱いになり allowed: false の assertion が偶発的に落ちる。
+    // 500ms あれば record→check 間の遅延を実質的に吸収できる。
     const call = (mode: "check" | "record") =>
       stub
         .fetch("https://session-do/ratelimit", {
           method: "POST",
-          body: JSON.stringify({ key: "login:window-test", limit: 1, windowMs: 50, mode }),
+          body: JSON.stringify({ key: "login:window-test", limit: 1, windowMs: 500, mode }),
         })
         .then((r) => r.json() as Promise<{ allowed: boolean }>);
 
@@ -294,7 +297,7 @@ describe("admin 認証", () => {
     await call("record");
     expect((await call("check")).allowed).toBe(false);
 
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    await new Promise((resolve) => setTimeout(resolve, 600));
     expect((await call("check")).allowed).toBe(true);
   });
 });
