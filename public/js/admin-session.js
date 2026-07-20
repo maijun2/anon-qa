@@ -11,6 +11,7 @@
     surveys: [],
     sort: "new",
     answeringId: null,
+    answerPendingImage: null,
     editingMaterialId: null,
   };
 
@@ -50,6 +51,7 @@
       onMessage: handleWsMessage,
       onStatus: (s) => { $("conn-status").hidden = s === "open"; },
     });
+    AnonQA.initSoundToggle($("sound-toggle"));
   }
 
   function renderHeader() {
@@ -96,6 +98,7 @@
         if (existing) Object.assign(existing, p.question);
         else state.questions.unshift(p.question);
         renderQuestions();
+        if (msg.type === "question:new" && !existing) AnonQA.playNotify();
         break;
       }
       case "question:deleted":
@@ -152,16 +155,28 @@
         ${q.answers.length ? `<div class="answers">${q.answers.map((a) => `
           <div class="answer${a.authorRole === "instructor" ? "" : " answer-participant"}" data-answer-id="${esc(a.id)}">
             <span class="answer-label${a.authorRole === "instructor" ? "" : " answer-label-participant"}">${a.authorRole === "instructor" ? "講師" : "参加者"}</span>
-            <p>${AnonQA.linkify(a.body)}</p>
+            ${a.body ? `<p>${AnonQA.linkify(a.body)}</p>` : ""}
+            ${a.imageKey ? `<a href="${imageUrl(a.imageKey)}" target="_blank" rel="noopener"><img class="answer-image" src="${imageUrl(a.imageKey)}" alt="添付画像" loading="lazy"></a>` : ""}
             <span class="muted small">${AnonQA.formatJst(a.createdAt)}${a.updatedAt > a.createdAt ? "(編集済み)" : ""}</span>
             <button class="btn btn-small btn-ghost btn-danger-text" data-action="delete-answer">削除</button>
           </div>`).join("")}</div>` : ""}
         ${state.answeringId === q.id ? `
           <div class="field" style="margin-top: 8px;">
-            <textarea class="textarea answer-input" rows="3" placeholder="回答を入力"></textarea>
-            <div class="admin-item-actions">
-              <button class="btn btn-primary btn-small" data-action="submit-answer">回答を送信</button>
-              <button class="btn btn-ghost btn-small" data-action="cancel-answer">キャンセル</button>
+            <textarea class="textarea answer-input" rows="3" placeholder="回答を入力(画像の貼り付け・添付も可能)"></textarea>
+            ${state.answerPendingImage ? `
+              <div class="image-preview">
+                <img src="${state.answerPendingImage.previewUrl}" alt="添付画像プレビュー">
+                <button type="button" class="btn btn-ghost btn-small" data-action="answer-image-remove">添付を取り消す</button>
+              </div>` : ""}
+            <div class="form-row">
+              <label class="btn btn-ghost btn-small file-label">
+                画像を添付
+                <input type="file" class="answer-image-input" accept="image/png,image/jpeg,image/gif,image/webp">
+              </label>
+              <div class="admin-item-actions">
+                <button class="btn btn-primary btn-small" data-action="submit-answer">回答を送信</button>
+                <button class="btn btn-ghost btn-small" data-action="cancel-answer">キャンセル</button>
+              </div>
             </div>
           </div>` : ""}
         <div class="admin-item-actions">
@@ -187,23 +202,37 @@
     try {
       if (action === "answer") {
         state.answeringId = q.id;
+        clearAnswerPendingImage();
         renderQuestions();
         const input = document.querySelector(`[data-id="${CSS.escape(q.id)}"] .answer-input`);
         if (input) input.focus();
       }
       if (action === "cancel-answer") {
         state.answeringId = null;
+        clearAnswerPendingImage();
+        renderQuestions();
+      }
+      if (action === "answer-image-remove") {
+        clearAnswerPendingImage();
         renderQuestions();
       }
       if (action === "submit-answer") {
         const body = card.querySelector(".answer-input").value.trim();
-        if (!body) return;
+        const pending = state.answerPendingImage;
+        if (!body && !pending) return;
+        let imageKey;
+        if (pending) {
+          const form = new FormData();
+          form.append("file", pending.file);
+          imageKey = (await AdminQA.api(`/sessions/${sessionId}/images`, { method: "POST", body: form })).imageKey;
+        }
         const data = await AdminQA.api(`/sessions/${sessionId}/questions/${q.id}/answers`, {
           method: "POST",
-          body: JSON.stringify({ body }),
+          body: JSON.stringify({ body, imageKey }),
         });
         Object.assign(q, data.question);
         state.answeringId = null;
+        clearAnswerPendingImage();
         renderQuestions();
       }
       if (action === "toggle-answered") {
@@ -231,6 +260,50 @@
       }
     } catch (e) {
       alert(e.message);
+    }
+  });
+
+  // ---------- 回答フォームの画像添付 ----------
+  const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+  const isAllowedImage = (type) => ALLOWED_IMAGE_TYPES.includes(type);
+
+  function setAnswerPendingImage(file) {
+    if (!file) return;
+    if (!isAllowedImage(file.type)) {
+      alert("画像は PNG / JPEG / GIF / WebP 形式のみ添付できます");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert("画像は 1 枚 5MB 以下にしてください");
+      return;
+    }
+    clearAnswerPendingImage();
+    state.answerPendingImage = { file, previewUrl: URL.createObjectURL(file) };
+    renderQuestions();
+  }
+
+  function clearAnswerPendingImage() {
+    if (state.answerPendingImage) URL.revokeObjectURL(state.answerPendingImage.previewUrl);
+    state.answerPendingImage = null;
+  }
+
+  $("question-list").addEventListener("change", (ev) => {
+    const input = ev.target.closest(".answer-image-input");
+    if (!input || !input.files || !input.files[0]) return;
+    setAnswerPendingImage(input.files[0]);
+    input.value = "";
+  });
+
+  $("question-list").addEventListener("paste", (ev) => {
+    if (!ev.target.closest(".answer-input")) return;
+    const items = ev.clipboardData && ev.clipboardData.items;
+    if (!items) return;
+    for (const item of items) {
+      if (isAllowedImage(item.type)) {
+        ev.preventDefault();
+        setAnswerPendingImage(item.getAsFile());
+        return;
+      }
     }
   });
 

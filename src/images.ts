@@ -50,6 +50,27 @@ export async function deleteImage(env: Env, sessionId: string, imageId: string |
   if (imageId) await env.IMAGES.delete(r2Key(sessionId, imageId));
 }
 
+/**
+ * 質問に紐づく全画像(質問本体 + 返信の添付)を R2 から削除する。
+ * answers は質問削除時に FK CASCADE で消えるため、必ず質問行の削除より前に呼ぶこと。
+ */
+export async function deleteQuestionImages(
+  env: Env,
+  sessionId: string,
+  questionId: string,
+  questionImageKey: string | null,
+): Promise<void> {
+  await deleteImage(env, sessionId, questionImageKey);
+  const answers = await env.DB.prepare(
+    "SELECT image_key FROM answers WHERE question_id = ? AND image_key IS NOT NULL",
+  )
+    .bind(questionId)
+    .all<{ image_key: string }>();
+  for (const a of answers.results) {
+    await deleteImage(env, sessionId, a.image_key);
+  }
+}
+
 export async function deleteSessionImages(env: Env, sessionId: string): Promise<void> {
   let cursor: string | undefined;
   do {

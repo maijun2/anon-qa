@@ -9,7 +9,7 @@ import {
   publicSession,
 } from "../db";
 import { errorJson, json, readJson } from "../http";
-import { deleteImage, getImage, uploadImage } from "../images";
+import { deleteImage, deleteQuestionImages, getImage, uploadImage } from "../images";
 import { broadcast, checkRateLimit } from "../realtime";
 import { verifyTurnstile } from "../turnstile";
 import type { AnswerRow, Env, QuestionRow, SessionRow, SurveyRow } from "../types";
@@ -154,8 +154,8 @@ async function handleQuestions(request: Request, env: Env, session: SessionRow, 
       await broadcast(env, session.code, "question:updated", { question: updated });
       return json({ question: { ...updated, isMine: true } });
     }
+    await deleteQuestionImages(env, session.id, question.id, question.image_key);
     await env.DB.prepare("DELETE FROM questions WHERE id = ?").bind(question.id).run();
-    await deleteImage(env, session.id, question.image_key);
     await broadcast(env, session.code, "question:deleted", { questionId: question.id });
     return json({ ok: true });
   }
@@ -168,19 +168,19 @@ async function handleQuestions(request: Request, env: Env, session: SessionRow, 
 
     if (rest.length === 2 && method === "POST") {
       if (!(await checkRateLimit(env, session.code, request, "answer"))) return rateLimited();
-      const body = await readJson<{ body?: string }>(request);
+      const body = await readJson<{ body?: string; imageKey?: string }>(request);
       const text = body?.body?.trim() ?? "";
-      if (!text) return errorJson("返信内容を入力してください", 400);
+      if (!text && !body?.imageKey) return errorJson("返信内容を入力してください", 400);
       if (text.length > MAX_QUESTION_LENGTH) {
         return errorJson(`返信は ${MAX_QUESTION_LENGTH} 文字以内で入力してください`, 400);
       }
       const id = crypto.randomUUID();
       const now = Date.now();
       await env.DB.prepare(
-        `INSERT INTO answers (id, question_id, body, author_role, token_hash, created_at, updated_at)
-         VALUES (?, ?, ?, 'participant', ?, ?, ?)`,
+        `INSERT INTO answers (id, question_id, body, author_role, token_hash, image_key, created_at, updated_at)
+         VALUES (?, ?, ?, 'participant', ?, ?, ?, ?)`,
       )
-        .bind(id, question.id, text, myHash, now, now)
+        .bind(id, question.id, text, myHash, body?.imageKey ?? null, now, now)
         .run();
       const updated = await getPublicQuestion(env, question.id);
       await broadcast(env, session.code, "question:updated", { question: updated });
@@ -208,6 +208,7 @@ async function handleQuestions(request: Request, env: Env, session: SessionRow, 
           .run();
       } else {
         await env.DB.prepare("DELETE FROM answers WHERE id = ?").bind(answer.id).run();
+        await deleteImage(env, session.id, answer.image_key);
       }
       const updated = await getPublicQuestion(env, question.id);
       await broadcast(env, session.code, "question:updated", { question: updated });

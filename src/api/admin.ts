@@ -11,7 +11,7 @@ import {
   publicSession,
 } from "../db";
 import { errorJson, json, readJson } from "../http";
-import { deleteImage, deleteSessionImages } from "../images";
+import { deleteImage, deleteQuestionImages, deleteSessionImages, uploadImage } from "../images";
 import { ADMIN_RATE_LIMIT_KEY, broadcast, checkRateLimit } from "../realtime";
 import type { Env, MaterialRow, QuestionRow, SessionRow, SurveyOptionRow, SurveyRow } from "../types";
 
@@ -117,6 +117,11 @@ async function handleSessions(request: Request, env: Env, rest: string[]): Promi
     return json({ ok: true });
   }
 
+  // 講師回答の添付画像アップロード(admin は Cookie 認証済み)。既存の uploadImage を再利用
+  if (rest.length === 2 && rest[1] === "images" && method === "POST") {
+    return uploadImage(request, env, session);
+  }
+
   if (rest.length === 2 && rest[1] === "end" && method === "POST") {
     await env.DB.prepare("UPDATE sessions SET status = 'ended' WHERE id = ?").bind(session.id).run();
     const updated = { ...session, status: "ended" as const };
@@ -149,22 +154,22 @@ async function handleAdminQuestion(
   if (!question) return errorJson("質問が見つかりません", 404);
 
   if (rest.length === 1 && method === "DELETE") {
+    await deleteQuestionImages(env, session.id, question.id, question.image_key);
     await env.DB.prepare("DELETE FROM questions WHERE id = ?").bind(question.id).run();
-    await deleteImage(env, session.id, question.image_key);
     await broadcast(env, session.code, "question:deleted", { questionId: question.id });
     return json({ ok: true });
   }
 
   if (rest.length === 2 && rest[1] === "answers" && method === "POST") {
-    const body = await readJson<{ body?: string }>(request);
-    const text = body?.body?.trim();
-    if (!text) return errorJson("回答内容を入力してください", 400);
+    const body = await readJson<{ body?: string; imageKey?: string }>(request);
+    const text = body?.body?.trim() ?? "";
+    if (!text && !body?.imageKey) return errorJson("回答内容を入力してください", 400);
     const now = Date.now();
     await env.DB.batch([
       env.DB.prepare(
-        `INSERT INTO answers (id, question_id, body, author_role, token_hash, created_at, updated_at)
-         VALUES (?, ?, ?, 'instructor', NULL, ?, ?)`,
-      ).bind(crypto.randomUUID(), question.id, text, now, now),
+        `INSERT INTO answers (id, question_id, body, author_role, token_hash, image_key, created_at, updated_at)
+         VALUES (?, ?, ?, 'instructor', NULL, ?, ?, ?)`,
+      ).bind(crypto.randomUUID(), question.id, text, body?.imageKey ?? null, now, now),
       env.DB.prepare("UPDATE questions SET is_answered = 1 WHERE id = ?").bind(question.id),
     ]);
     const updated = await getPublicQuestion(env, question.id);
@@ -174,10 +179,12 @@ async function handleAdminQuestion(
 
   // 返信のモデレーション削除(参加者返信・講師回答とも削除可)。is_answered は自動で変えない
   if (rest.length === 3 && rest[1] === "answers" && method === "DELETE") {
-    const result = await env.DB.prepare("DELETE FROM answers WHERE id = ? AND question_id = ?")
+    const answer = await env.DB.prepare("SELECT image_key FROM answers WHERE id = ? AND question_id = ?")
       .bind(rest[2], question.id)
-      .run();
-    if (!result.meta.changes) return errorJson("返信が見つかりません", 404);
+      .first<{ image_key: string | null }>();
+    if (!answer) return errorJson("返信が見つかりません", 404);
+    await env.DB.prepare("DELETE FROM answers WHERE id = ?").bind(rest[2]).run();
+    await deleteImage(env, session.id, answer.image_key);
     const updated = await getPublicQuestion(env, question.id);
     await broadcast(env, session.code, "question:updated", { question: updated });
     return json({ question: updated });

@@ -6,6 +6,10 @@
 
   const state = { session: null, questions: [], surveys: [], sort: "votes", showAnswered: false };
 
+  function imageUrl(imageKey) {
+    return `/api/s/${encodeURIComponent(state.session.code)}/images/${encodeURIComponent(imageKey)}`;
+  }
+
   init();
 
   async function init() {
@@ -29,6 +33,7 @@
       onMessage: handleWsMessage,
       onStatus: (s) => { $("conn-status").hidden = s === "open"; },
     });
+    AnonQA.initSoundToggle($("sound-toggle"));
   }
 
   document.querySelectorAll(".sort-btn").forEach((btn) => {
@@ -53,6 +58,7 @@
         if (existing) Object.assign(existing, p.question);
         else state.questions.unshift(p.question);
         renderQuestions();
+        if (msg.type === "question:new" && !existing) AnonQA.playNotify();
         break;
       }
       case "question:deleted":
@@ -93,7 +99,7 @@
         </div>
         <p class="question-body">${AnonQA.linkify(q.body)}</p>
         ${q.answers.length ? `<div class="answers">${q.answers.map((a) => `
-          <div class="answer${a.authorRole === "instructor" ? "" : " answer-participant"}"><span class="answer-label${a.authorRole === "instructor" ? "" : " answer-label-participant"}">${a.authorRole === "instructor" ? "講師" : "参加者"}</span><p>${AnonQA.linkify(a.body)}</p></div>`).join("")}</div>` : ""}
+          <div class="answer${a.authorRole === "instructor" ? "" : " answer-participant"}"><span class="answer-label${a.authorRole === "instructor" ? "" : " answer-label-participant"}">${a.authorRole === "instructor" ? "講師" : "参加者"}</span>${a.body ? `<p>${AnonQA.linkify(a.body)}</p>` : ""}${a.imageKey ? `<img class="answer-image" src="${imageUrl(a.imageKey)}" alt="添付画像" loading="lazy">` : ""}</div>`).join("")}</div>` : ""}
       </article>`).join("");
     $("question-empty").hidden = list.length > 0;
   }
