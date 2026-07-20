@@ -52,6 +52,10 @@ export class SessionDO implements DurableObject {
     }
 
     if (url.pathname === "/ratelimit" && request.method === "POST") {
+      // check と record が別リクエストになったぶん、両者の間に別の失敗リクエストが割り込むと
+      // 双方が check を通過してしまい、記録件数が limit をわずかに超えることがありうる。
+      // ずれる方向は常に「より厳しくブロックされる側」(超過方向)のみで、
+      // 制限をすり抜けられる方向にはずれないため、実害はなく許容している。
       const { key, limit, windowMs, mode } = (await request.json()) as RateLimitBody;
       const now = Date.now();
       const hits = (this.buckets.get(key) ?? []).filter((t) => now - t < windowMs);
