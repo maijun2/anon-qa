@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
 
+env:
+  # devDependencies の playwright はスクリーンショット撮影用途のみで CI では使わないため、
+  # npm ci でブラウザバイナリをダウンロードしないようにする
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
 jobs:
   test:
     runs-on: ubuntu-latest
