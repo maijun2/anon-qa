@@ -3,6 +3,10 @@ import type { Env, SessionRow } from "./types";
 
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
+// ラスタ画像のみ許可。SVG(image/svg+xml)はスクリプトを内包でき、同一オリジンで
+// 配信すると格納型 XSS になるため除外する。
+const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
 function r2Key(sessionId: string, imageId: string): string {
   return `${sessionId}/${imageId}`;
 }
@@ -15,7 +19,9 @@ export async function uploadImage(request: Request, env: Env, session: SessionRo
     return errorJson("multipart/form-data で file を送信してください", 400);
   }
   if (!(file instanceof File)) return errorJson("multipart/form-data で file を送信してください", 400);
-  if (!file.type.startsWith("image/")) return errorJson("画像ファイル(image/*)のみアップロードできます", 400);
+  if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
+    return errorJson("画像は PNG / JPEG / GIF / WebP 形式のみアップロードできます", 400);
+  }
   if (file.size > MAX_IMAGE_BYTES) return errorJson("画像は 1 枚 5MB 以下にしてください", 413);
 
   const imageId = crypto.randomUUID();
@@ -32,6 +38,10 @@ export async function getImage(env: Env, session: SessionRow, imageId: string): 
     headers: {
       "Content-Type": obj.httpMetadata?.contentType ?? "application/octet-stream",
       "Cache-Control": "private, max-age=3600",
+      // 多層防御: MIME スニフィング抑止 + 万一の埋め込みスクリプトを無効化
+      // (アップロード時に SVG を弾いた上での二重の保険)
+      "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": "default-src 'none'; sandbox",
     },
   });
 }

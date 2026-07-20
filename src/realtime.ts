@@ -23,7 +23,12 @@ export const RATE_LIMITS = {
   vote: { limit: 30, windowMs: 60_000 },
   image: { limit: 10, windowMs: 60_000 },
   survey: { limit: 30, windowMs: 60_000 },
+  // admin ログインのブルートフォース抑止。失敗した試行のみをカウントする
+  login: { limit: 5, windowMs: 60_000 },
 } as const;
+
+// admin ログインは特定セッションに紐付かないため、専用の固定 DO 名に集約する
+export const ADMIN_RATE_LIMIT_KEY = "__admin__";
 
 /**
  * IP 単位の rate limit。IP は DO のメモリ内カウンタにのみ渡し、DB・ログには一切残さない。

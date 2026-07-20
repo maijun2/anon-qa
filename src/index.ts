@@ -10,21 +10,40 @@ import type { Env } from "./types";
 
 export { SessionDO };
 
+/**
+ * 全レスポンスに共通のセキュリティヘッダを付与する。
+ * - X-Frame-Options: clickjacking 防止(admin を含め iframe 埋め込み不可)
+ * - X-Content-Type-Options: MIME スニフィング抑止
+ * - Referrer-Policy: 外部リンク遷移時に参加ページ URL を漏らさない(匿名性)
+ * WebSocket の Upgrade(101)レスポンスは webSocket プロパティを保持するため対象外。
+ */
+function withSecurityHeaders(res: Response): Response {
+  if (res.status === 101) return res;
+  const headers = new Headers(res.headers);
+  headers.set("X-Frame-Options", "DENY");
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Referrer-Policy", "no-referrer");
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 export default {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url);
     const seg = url.pathname.split("/").filter(Boolean);
 
+    let res: Response;
     if (seg[0] === "api") {
       try {
-        return await handleApi(request, env, seg.slice(1));
+        res = await handleApi(request, env, seg.slice(1));
       } catch (err) {
         // 匿名性維持のため、リクエスト内容(IP・ヘッダ等)はログに出さない
         console.error("api error:", err instanceof Error ? err.stack : String(err));
-        return errorJson("サーバエラーが発生しました", 500);
+        res = errorJson("サーバエラーが発生しました", 500);
       }
+    } else {
+      res = await handlePage(request, env, seg, url);
     }
-    return handlePage(request, env, seg, url);
+    return withSecurityHeaders(res);
   },
 
   async scheduled(_controller, env, ctx): Promise<void> {
