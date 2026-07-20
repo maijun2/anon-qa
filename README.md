@@ -2,6 +2,10 @@
 
 トレーニング(研修)用の完全匿名 Q&A アプリ。Cloudflare Workers 単体構成(Workers Static Assets + D1 + R2 + Durable Objects + Turnstile + Cron Triggers)。
 
+| 参加者: 質問一覧 | 講師: 投影モード |
+|---|---|
+| ![参加者の質問一覧](docs/images/participant-questions.png) | ![講師の投影モード](docs/images/admin-present.png) |
+
 - 匿名質問(画像添付可)・いいね投票・自分の質問の編集/削除
 - 講師回答・回答済み管理・リアルタイムアンケート・参考情報共有・テンプレート
 - セッションは作成から 30 日で自動削除(D1 + R2)
@@ -103,3 +107,7 @@ Turnstile widget の許可ドメイン(ダッシュボード → Turnstile → D
 - ブラウザトークン(`crypto.randomUUID()`)は SHA-256 ハッシュのみ D1 に保存し、本人の投稿編集/削除判定と投票重複防止のみに使用
 - 講師を含め誰も質問者を特定できない(トークンハッシュは API レスポンスに含めない)
 - これらはテスト(`test/anonymity.test.ts`)で担保している
+
+## License
+
+MIT License。詳細は [LICENSE](LICENSE) を参照してください。
