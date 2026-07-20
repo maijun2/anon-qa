@@ -11,6 +11,10 @@
   const $ = (id) => document.getElementById(id);
   const esc = AnonQA.escapeHtml;
 
+  // サーバ側と同じラスタ画像のみ許可(SVG は XSS 対策で除外)
+  const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+  const isAllowedImage = (type) => ALLOWED_IMAGE_TYPES.includes(type);
+
   const state = {
     session: null,
     ended: false,
@@ -438,7 +442,7 @@
     const items = ev.clipboardData && ev.clipboardData.items;
     if (!items) return;
     for (const item of items) {
-      if (item.type.startsWith("image/")) {
+      if (isAllowedImage(item.type)) {
         ev.preventDefault();
         setPendingImage(item.getAsFile());
         return;
@@ -455,13 +459,13 @@
     ev.preventDefault();
     questionForm.classList.remove("drop-target");
     const file = ev.dataTransfer.files && ev.dataTransfer.files[0];
-    if (file && file.type.startsWith("image/")) setPendingImage(file);
+    if (file && isAllowedImage(file.type)) setPendingImage(file);
   });
 
   function setPendingImage(file) {
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      alert("画像ファイルのみ添付できます");
+    if (!isAllowedImage(file.type)) {
+      alert("画像は PNG / JPEG / GIF / WebP 形式のみ添付できます");
       return;
     }
     if (file.size > 5 * 1024 * 1024) {

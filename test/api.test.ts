@@ -176,6 +176,26 @@ describe("画像アップロード", () => {
     expect(res.status).toBe(400);
   });
 
+  it("SVG(image/svg+xml)は XSS 対策で 400", async () => {
+    const cookie = await adminLogin();
+    const session = await createSession(cookie);
+    const ctx = await enter(session.code);
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>';
+    const res = await upload(ctx, new File([svg], "x.svg", { type: "image/svg+xml" }));
+    expect(res.status).toBe(400);
+  });
+
+  it("取得した画像に nosniff とサンドボックス CSP が付く", async () => {
+    const cookie = await adminLogin();
+    const session = await createSession(cookie);
+    const ctx = await enter(session.code);
+    const up = await upload(ctx, new File([new Uint8Array([137, 80, 78, 71])], "a.png", { type: "image/png" }));
+    const { imageKey } = (await up.json()) as { imageKey: string };
+    const got = await SELF.fetch(`${BASE}/api/s/${ctx.code}/images/${imageKey}`);
+    expect(got.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(got.headers.get("Content-Security-Policy")).toContain("sandbox");
+  });
+
   it("5MB 超は 413", async () => {
     const cookie = await adminLogin();
     const session = await createSession(cookie);
@@ -224,6 +244,25 @@ describe("admin 認証", () => {
     expect(cookie).toContain("admin_session=");
     const me = await SELF.fetch(`${BASE}/api/admin/me`, { headers: { Cookie: cookie } });
     expect(me.status).toBe(200);
+  });
+
+  it("パスワード誤りを連続すると 429 になるが、正しいログインは制限されない", async () => {
+    const wrongLogin = () =>
+      SELF.fetch(`${BASE}/api/admin/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: "still-wrong" }),
+      });
+
+    let saw429 = false;
+    for (let i = 0; i < 7; i++) {
+      if ((await wrongLogin()).status === 429) saw429 = true;
+    }
+    expect(saw429).toBe(true);
+
+    // 正規パスワードは失敗カウントの対象外なので、制限中でもログインできる
+    const cookie = await adminLogin();
+    expect(cookie).toContain("admin_session=");
   });
 });
 

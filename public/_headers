@@ -1,0 +1,6 @@
+# 静的配信されるアセット(入室ページ / css / js 等、run_worker_first 対象外)への
+# セキュリティヘッダ。worker 経由のルートは src/index.ts の withSecurityHeaders が付与する。
+/*
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer

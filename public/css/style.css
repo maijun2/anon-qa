@@ -482,6 +482,9 @@ body.present {
 /* レスポンシブ: 768px 以上 */
 @media (min-width: 768px) {
   .container { padding: 0 24px; }
-  .tabs { max-width: 480px; margin-left: 0; }
+  /* タブは本文と同じ中央コンテナ幅を保ち、左端を本文カードと揃える。
+     ボタンは幅いっぱいに引き伸ばさず左寄せで並べる */
+  .tabs { justify-content: flex-start; }
+  .tab { flex: 0 0 auto; min-width: 128px; }
   .present-columns { grid-template-columns: 3fr 2fr; }
 }

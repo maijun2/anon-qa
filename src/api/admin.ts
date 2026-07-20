@@ -12,7 +12,7 @@ import {
 } from "../db";
 import { errorJson, json, readJson } from "../http";
 import { deleteImage, deleteSessionImages } from "../images";
-import { broadcast } from "../realtime";
+import { ADMIN_RATE_LIMIT_KEY, broadcast, checkRateLimit } from "../realtime";
 import type { Env, MaterialRow, QuestionRow, SessionRow, SurveyOptionRow, SurveyRow } from "../types";
 
 // 紛らわしい文字(0/O, 1/I)を除いたコード用アルファベット
@@ -30,6 +30,10 @@ export async function handleAdminApi(request: Request, env: Env, rest: string[])
   if (rest[0] === "login" && method === "POST") {
     const body = await readJson<{ password?: string }>(request);
     if (!body?.password || !timingSafeEqualStr(body.password, env.ADMIN_PASSWORD)) {
+      // 失敗時のみカウント。正規ログインは制限対象外(連続開催でも支障が出ない)
+      if (!(await checkRateLimit(env, ADMIN_RATE_LIMIT_KEY, request, "login"))) {
+        return errorJson("試行回数が多すぎます。しばらく待ってから再試行してください", 429);
+      }
       return errorJson("パスワードが違います", 401);
     }
     return json({ ok: true }, 200, { "Set-Cookie": await issueAdminCookie(env) });
