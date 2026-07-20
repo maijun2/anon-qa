@@ -32,18 +32,23 @@ export const ADMIN_RATE_LIMIT_KEY = "__admin__";
 
 /**
  * IP 単位の rate limit。IP は DO のメモリ内カウンタにのみ渡し、DB・ログには一切残さない。
+ *
+ * mode 省略時は従来どおり「確認と同時にカウント」する(question/vote 等はこれを使う)。
+ * admin login のように「失敗した試行だけをカウントしたい」場合は、
+ * "check" で参照のみ行ってから比較し、失敗が確定した時だけ "record" でカウントする。
  */
 export async function checkRateLimit(
   env: Env,
   code: string,
   request: Request,
   bucket: keyof typeof RATE_LIMITS,
+  mode?: "check" | "record",
 ): Promise<boolean> {
   const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
   const { limit, windowMs } = RATE_LIMITS[bucket];
   const res = await sessionStub(env, code).fetch("https://session-do/ratelimit", {
     method: "POST",
-    body: JSON.stringify({ key: `${bucket}:${ip}`, limit, windowMs }),
+    body: JSON.stringify({ key: `${bucket}:${ip}`, limit, windowMs, mode }),
   });
   const data = (await res.json()) as { allowed: boolean };
   return data.allowed;
