@@ -37,7 +37,8 @@ Zoom のチャットでは質問者名が表示される問題を解消し、質
   - 質問・返信・参考情報の本文中 URL は自動リンク化(新規タブで開く)
   - 回答済み質問はグレーアウト / 別タブ表示(回答済みになるのは講師が回答したときのみ。参加者返信では変わらない)
   - 並び順: 新着順 / いいね順
-  - WebSocket による即時反映
+  - 質問一覧は 50 件ずつのカーソルページネーション(スクロールで自動追加読み込み)
+  - WebSocket による即時反映(新着・更新は差分配信のためページネーションの影響を受けない)
   - 新着質問の通知音(🔔 ボタンで ON/OFF、既定 ON、設定は localStorage 保持。Web Audio で合成し外部アセット不要)
 - **参考情報タブ**
   - 講師が登録したリンク / テキストメモを Module 別に閲覧
@@ -83,7 +84,13 @@ Zoom のチャットでは質問者名が表示される問題を解消し、質
 ### 4.3 セキュリティ / 荒らし対策
 
 - Turnstile: 入室時に 1 回検証(投稿ごとには出さない、UX 優先)
-- Rate limit: 投稿・返信・投票の連投防止(IP 単位、IP は保存しない)
+- Rate limit: 投稿・返信・投票の連投防止。キーは「IP + 端末単位の匿名トークンハッシュ」の複合
+  (教室 NAT で同一 IP を共有する参加者同士が制限を食い合わないため)。トークンなしの
+  リクエストは IP 単独キー + 緩い上限(通常値の 10 倍)。IP・ハッシュとも保存しない(DO メモリ内のみ)
+- admin ログインの失敗は「IP 別(5 失敗/60s)+ グローバル全 IP 合算(20 失敗/60s)」の 2 段で制限。
+  グローバル超過時は完全遮断ではなく指数バックオフ(30s → 60s → … → 上限 10 分)
+- HTML ページに Content-Security-Policy を付与(script は自ホストと Turnstile のみ許可。
+  値は `src/http.ts` の `HTML_CSP` と `public/_headers` で管理、変更時は両方を同期)
 - 添付画像は PNG / JPEG / GIF / WebP のみ許可(SVG はストアド XSS 対策で拒否)。Content-Type と 5MB 制限をフロント・サーバの両方で検証
 - アクセスコードを知っていれば誰でも入室可能なため、共有範囲に注意(運用ルール)
 - admin はパスワード認証(環境変数 + セッション Cookie)
@@ -202,5 +209,5 @@ anon-qa/
 - WebSocket は Durable Objects の Hibernation API を使用し、無料枠の duration 課金を抑える
 - 画像は Worker 経由で R2 に PUT(presigned URL は使わずシンプルに)。Content-Type 検証 + 5MB 制限をサーバ側でも実施
 - ブラウザトークンは `crypto.randomUUID()` を localStorage に保持。トークンはハッシュ化して D1 に保存
-- Rate limit は Workers の `env.RATE_LIMITER`(Rate Limiting binding)または DO 内カウンタで実装
+- Rate limit は DO 内のメモリカウンタで実装(キーは IP + 匿名トークンハッシュの複合。storage へ永続化しない)
 - Cron: `0 3 * * *`(JST 12:00)に期限切れセッションの D1 行 + R2 オブジェクトを削除
