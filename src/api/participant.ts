@@ -6,6 +6,7 @@ import {
   listMaterials,
   listQuestions,
   listSurveys,
+  parseQuestionsCursor,
   publicSession,
 } from "../db";
 import { errorJson, json, readJson } from "../http";
@@ -97,12 +98,14 @@ async function handleQuestions(request: Request, env: Env, session: SessionRow, 
         .all<{ question_id: string }>();
       for (const r of rows.results) myVotes.add(r.question_id);
     }
-    const questions = (await listQuestions(env, session.id, myHash)).map(({ tokenHash, ...q }) => ({
+    const cursor = parseQuestionsCursor(new URL(request.url).searchParams.get("cursor"));
+    const page = await listQuestions(env, session.id, myHash, cursor);
+    const questions = page.questions.map(({ tokenHash, ...q }) => ({
       ...q,
       isMine: myHash !== null && tokenHash === myHash,
       voted: myVotes.has(q.id),
     }));
-    return json({ questions });
+    return json({ questions, nextCursor: page.nextCursor });
   }
 
   if (rest.length === 0 && method === "POST") {

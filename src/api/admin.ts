@@ -7,6 +7,7 @@ import {
   listMaterials,
   listQuestions,
   listSurveys,
+  parseQuestionsCursor,
   publicMaterial,
   publicSession,
 } from "../db";
@@ -104,10 +105,11 @@ async function handleSessions(request: Request, env: Env, rest: string[]): Promi
   if (!session) return errorJson("セッションが見つかりません", 404);
 
   if (rest.length === 1 && method === "GET") {
-    const questions = (await listQuestions(env, session.id)).map(({ tokenHash: _tokenHash, ...q }) => q);
+    const page = await listQuestions(env, session.id);
     return json({
       session: publicSession(session),
-      questions,
+      questions: page.questions.map(({ tokenHash: _tokenHash, ...q }) => q),
+      nextCursor: page.nextCursor,
       materials: await listMaterials(env, session.id),
       surveys: await listSurveys(env, session.id, true),
     });
@@ -130,6 +132,16 @@ async function handleSessions(request: Request, env: Env, rest: string[]): Promi
     const updated = { ...session, status: "ended" as const };
     await broadcast(env, session.code, "session:ended", { session: publicSession(updated) });
     return json({ session: publicSession(updated) });
+  }
+
+  // 質問一覧の追加ページ取得(スクロール時)。カーソルは listQuestions と同形式
+  if (rest.length === 2 && rest[1] === "questions" && method === "GET") {
+    const cursor = parseQuestionsCursor(new URL(request.url).searchParams.get("cursor"));
+    const page = await listQuestions(env, session.id, null, cursor);
+    return json({
+      questions: page.questions.map(({ tokenHash: _tokenHash, ...q }) => q),
+      nextCursor: page.nextCursor,
+    });
   }
 
   if (rest[1] === "questions" && rest.length >= 3) {

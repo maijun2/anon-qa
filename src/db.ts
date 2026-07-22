@@ -69,40 +69,84 @@ function toPublicQuestion(q: QuestionRow & { vote_count: number }, answers: Publ
   };
 }
 
+/** 質問一覧の 1 ページあたりの件数(初期ロード・追加ロード共通) */
+export const QUESTIONS_PAGE_SIZE = 50;
+
+export interface QuestionsCursor {
+  createdAt: number;
+  id: string;
+}
+
+/** カーソルは "createdAt_id" 形式。不正な値は先頭ページ扱い(null)にする */
+export function parseQuestionsCursor(raw: string | null): QuestionsCursor | null {
+  if (!raw) return null;
+  const sep = raw.indexOf("_");
+  if (sep <= 0) return null;
+  const createdAt = Number(raw.slice(0, sep));
+  const id = raw.slice(sep + 1);
+  if (!Number.isFinite(createdAt) || !id) return null;
+  return { createdAt, id };
+}
+
+export interface QuestionsPage {
+  questions: Array<PublicQuestion & { tokenHash: string }>;
+  /** 次ページ取得用カーソル。null なら最終ページ */
+  nextCursor: string | null;
+}
+
 /**
- * セッションの全質問。tokenHash は本人判定(isMine)用で、レスポンスに含めては
- * ならない(admin にも返さない — ハッシュでも投稿者の紐付けが可能になるため)。
+ * セッションの質問一覧(created_at + id の keyset カーソルページネーション)。
+ * created_at 同値の取りこぼし・重複を避けるため id を tiebreak に使う。
+ * tokenHash は本人判定(isMine)用で、レスポンスに含めてはならない
+ * (admin にも返さない — ハッシュでも投稿者の紐付けが可能になるため)。
  */
 export async function listQuestions(
   env: Env,
   sessionId: string,
   myHash: string | null = null,
-): Promise<Array<PublicQuestion & { tokenHash: string }>> {
-  const questions = await env.DB.prepare(
-    `SELECT q.*, (SELECT COUNT(*) FROM votes v WHERE v.question_id = q.id) AS vote_count
-     FROM questions q WHERE q.session_id = ? ORDER BY q.created_at DESC`,
-  )
-    .bind(sessionId)
+  cursor: QuestionsCursor | null = null,
+): Promise<QuestionsPage> {
+  let sql = `SELECT q.*, (SELECT COUNT(*) FROM votes v WHERE v.question_id = q.id) AS vote_count
+     FROM questions q WHERE q.session_id = ?`;
+  const binds: (string | number)[] = [sessionId];
+  if (cursor) {
+    sql += " AND (q.created_at < ? OR (q.created_at = ? AND q.id < ?))";
+    binds.push(cursor.createdAt, cursor.createdAt, cursor.id);
+  }
+  // 次ページの有無を判定するため 1 件多く取得する
+  sql += " ORDER BY q.created_at DESC, q.id DESC LIMIT ?";
+  binds.push(QUESTIONS_PAGE_SIZE + 1);
+  const questions = await env.DB.prepare(sql)
+    .bind(...binds)
     .all<QuestionRow & { vote_count: number }>();
 
-  const answers = await env.DB.prepare(
-    `SELECT a.* FROM answers a JOIN questions q ON q.id = a.question_id
-     WHERE q.session_id = ? ORDER BY a.created_at ASC`,
-  )
-    .bind(sessionId)
-    .all<AnswerRow>();
+  const hasMore = questions.results.length > QUESTIONS_PAGE_SIZE;
+  const page = questions.results.slice(0, QUESTIONS_PAGE_SIZE);
 
+  // answers はページ内の質問のぶんだけロードする(全件ロードしない)
   const answersByQuestion = new Map<string, PublicAnswer[]>();
-  for (const a of answers.results) {
-    const list = answersByQuestion.get(a.question_id) ?? [];
-    list.push(toPublicAnswer(a, myHash));
-    answersByQuestion.set(a.question_id, list);
+  if (page.length > 0) {
+    const placeholders = page.map(() => "?").join(",");
+    const answers = await env.DB.prepare(
+      `SELECT * FROM answers WHERE question_id IN (${placeholders}) ORDER BY created_at ASC`,
+    )
+      .bind(...page.map((q) => q.id))
+      .all<AnswerRow>();
+    for (const a of answers.results) {
+      const list = answersByQuestion.get(a.question_id) ?? [];
+      list.push(toPublicAnswer(a, myHash));
+      answersByQuestion.set(a.question_id, list);
+    }
   }
 
-  return questions.results.map((q) => ({
-    ...toPublicQuestion(q, answersByQuestion.get(q.id) ?? []),
-    tokenHash: q.token_hash,
-  }));
+  const last = page[page.length - 1];
+  return {
+    questions: page.map((q) => ({
+      ...toPublicQuestion(q, answersByQuestion.get(q.id) ?? []),
+      tokenHash: q.token_hash,
+    })),
+    nextCursor: hasMore ? `${last.created_at}_${last.id}` : null,
+  };
 }
 
 export async function getPublicQuestion(
