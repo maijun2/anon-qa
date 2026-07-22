@@ -60,6 +60,10 @@
         <summary>回答済みの質問(<span id="answered-count">0</span>)</summary>
         <div id="answered-list" class="stack"></div>
       </details>
+
+      <!-- 無限スクロール用の番兵。画面に入ると次の 50 件を追加取得する -->
+      <div id="question-sentinel" aria-hidden="true"></div>
+      <p id="question-loading" class="muted small" hidden>読み込み中…</p>
     </section>
 
     <section id="tab-materials" class="tab-panel" hidden>

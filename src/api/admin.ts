@@ -7,12 +7,13 @@ import {
   listMaterials,
   listQuestions,
   listSurveys,
+  parseQuestionsCursor,
   publicMaterial,
   publicSession,
 } from "../db";
 import { errorJson, json, readJson } from "../http";
 import { deleteImage, deleteQuestionImages, deleteSessionImages, uploadImage } from "../images";
-import { ADMIN_RATE_LIMIT_KEY, broadcast, checkRateLimit } from "../realtime";
+import { broadcast, checkLoginRateLimit } from "../realtime";
 import type { Env, MaterialRow, QuestionRow, SessionRow, SurveyOptionRow, SurveyRow } from "../types";
 
 // 紛らわしい文字(0/O, 1/I)を除いたコード用アルファベット
@@ -30,13 +31,13 @@ export async function handleAdminApi(request: Request, env: Env, rest: string[])
   if (rest[0] === "login" && method === "POST") {
     // 比較の前に制限を確認(記録はしない)。超過中はパスワードの正誤に関わらず
     // 比較自体を行わず 429 で弾く(でないと正解を引かれた瞬間に制限を回避できてしまう)
-    if (!(await checkRateLimit(env, ADMIN_RATE_LIMIT_KEY, request, "login", "check"))) {
+    if (!(await checkLoginRateLimit(env, request, "check"))) {
       return errorJson("試行回数が多すぎます。しばらく待ってから再試行してください", 429);
     }
     const body = await readJson<{ password?: string }>(request);
     if (!body?.password || !timingSafeEqualStr(body.password, env.ADMIN_PASSWORD)) {
-      // 失敗時のみカウント。正規ログインは制限対象外(連続開催でも支障が出ない)
-      await checkRateLimit(env, ADMIN_RATE_LIMIT_KEY, request, "login", "record");
+      // 失敗時のみカウント(IP 別 + グローバルの両方)。正規ログインは制限対象外
+      await checkLoginRateLimit(env, request, "record");
       return errorJson("パスワードが違います", 401);
     }
     return json({ ok: true }, 200, { "Set-Cookie": await issueAdminCookie(env) });
@@ -104,10 +105,11 @@ async function handleSessions(request: Request, env: Env, rest: string[]): Promi
   if (!session) return errorJson("セッションが見つかりません", 404);
 
   if (rest.length === 1 && method === "GET") {
-    const questions = (await listQuestions(env, session.id)).map(({ tokenHash: _tokenHash, ...q }) => q);
+    const page = await listQuestions(env, session.id);
     return json({
       session: publicSession(session),
-      questions,
+      questions: page.questions.map(({ tokenHash: _tokenHash, ...q }) => q),
+      nextCursor: page.nextCursor,
       materials: await listMaterials(env, session.id),
       surveys: await listSurveys(env, session.id, true),
     });
@@ -130,6 +132,16 @@ async function handleSessions(request: Request, env: Env, rest: string[]): Promi
     const updated = { ...session, status: "ended" as const };
     await broadcast(env, session.code, "session:ended", { session: publicSession(updated) });
     return json({ session: publicSession(updated) });
+  }
+
+  // 質問一覧の追加ページ取得(スクロール時)。カーソルは listQuestions と同形式
+  if (rest.length === 2 && rest[1] === "questions" && method === "GET") {
+    const cursor = parseQuestionsCursor(new URL(request.url).searchParams.get("cursor"));
+    const page = await listQuestions(env, session.id, null, cursor);
+    return json({
+      questions: page.questions.map(({ tokenHash: _tokenHash, ...q }) => q),
+      nextCursor: page.nextCursor,
+    });
   }
 
   if (rest[1] === "questions" && rest.length >= 3) {

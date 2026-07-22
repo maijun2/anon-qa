@@ -13,6 +13,9 @@
     answeringId: null,
     answerPendingImage: null,
     editingMaterialId: null,
+    // カーソルページネーション(50 件ずつ)。null は最終ページ到達済み
+    nextCursor: null,
+    loadingMore: false,
   };
 
   document.querySelectorAll(".tab").forEach((tab) => {
@@ -39,6 +42,7 @@
     }
     state.session = data.session;
     state.questions = data.questions;
+    state.nextCursor = data.nextCursor || null;
     state.materials = data.materials;
     state.surveys = data.surveys;
     renderHeader();
@@ -53,6 +57,37 @@
     });
     AnonQA.initSoundToggle($("sound-toggle"));
   }
+
+  // 無限スクロール: 番兵が画面に入ったら次ページ(50 件)を追加取得する。
+  // WebSocket で既に受信済みの質問は id で重複排除する
+  async function loadMoreQuestions() {
+    if (!state.nextCursor || state.loadingMore) return;
+    state.loadingMore = true;
+    $("question-loading").hidden = false;
+    try {
+      const data = await AdminQA.api(
+        `/sessions/${sessionId}/questions?cursor=${encodeURIComponent(state.nextCursor)}`,
+      );
+      state.nextCursor = data.nextCursor || null;
+      for (const q of data.questions) {
+        if (!state.questions.some((x) => x.id === q.id)) state.questions.push(q);
+      }
+      renderQuestions();
+      // 追加後も番兵が画面内に残っている(リストが短い)場合は続けて取得する
+      if (state.nextCursor && $("question-sentinel").getBoundingClientRect().top < window.innerHeight) {
+        setTimeout(loadMoreQuestions, 0);
+      }
+    } catch (e) {
+      // 失敗しても次に番兵が見えたタイミングで再試行される
+    } finally {
+      state.loadingMore = false;
+      $("question-loading").hidden = true;
+    }
+  }
+
+  new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) loadMoreQuestions();
+  }).observe($("question-sentinel"));
 
   function renderHeader() {
     const s = state.session;

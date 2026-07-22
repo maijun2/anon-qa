@@ -6,6 +6,19 @@ interface RateLimitBody {
   windowMs: number;
   /** 省略時は「確認と同時にカウント」。"check" は参照のみ、"record" は無条件にカウント */
   mode?: "check" | "record";
+  /**
+   * 指定時、limit 超過で完全遮断せず指数バックオフに移行する(admin login の
+   * グローバルキー用)。超過のたびに待ち時間が initialMs → 2 倍 → … → maxMs と
+   * 伸び、バックオフ明けには窓がクリアされて再試行できる。
+   */
+  backoff?: { initialMs: number; maxMs: number };
+}
+
+interface BackoffState {
+  /** この時刻まではリクエストを拒否する */
+  until: number;
+  /** 連続超過の段数(待ち時間 = initialMs * 2^level、上限 maxMs) */
+  level: number;
 }
 
 /**
@@ -16,6 +29,8 @@ interface RateLimitBody {
  */
 export class SessionDO implements DurableObject {
   private buckets = new Map<string, number[]>();
+  // backoff 指定キーの遮断状態。buckets 同様メモリ内のみ(永続化・ログ出力なし)
+  private backoffs = new Map<string, BackoffState>();
   // このサイズを超えたら GC を試みる(全消去はしない。理由は gcStaleBuckets 参照)
   private static readonly GC_THRESHOLD = 5000;
   // GC で「期限切れ」とみなす基準。個々のバケットの windowMs は /ratelimit の
@@ -56,10 +71,30 @@ export class SessionDO implements DurableObject {
       // 双方が check を通過してしまい、記録件数が limit をわずかに超えることがありうる。
       // ずれる方向は常に「より厳しくブロックされる側」(超過方向)のみで、
       // 制限をすり抜けられる方向にはずれないため、実害はなく許容している。
-      const { key, limit, windowMs, mode } = (await request.json()) as RateLimitBody;
+      const { key, limit, windowMs, mode, backoff } = (await request.json()) as RateLimitBody;
       const now = Date.now();
+
+      // バックオフ期間中は窓の状態に関わらず拒否(期間中の試行でエスカレートはしない)
+      if (backoff) {
+        const st = this.backoffs.get(key);
+        if (st && now < st.until) return json({ allowed: false });
+      }
+
       const hits = (this.buckets.get(key) ?? []).filter((t) => now - t < windowMs);
       const allowed = hits.length < limit;
+
+      // backoff 指定キーの超過は「完全遮断」でなく「指数バックオフ」に移行する。
+      // 窓をクリアしてバックオフ明けに再試行可能にし、明けて間もなく(maxMs 以内に)
+      // 再超過した場合は待ち時間を 2 倍にエスカレートする(上限 maxMs)。
+      if (!allowed && backoff && mode !== "record") {
+        const st = this.backoffs.get(key);
+        const level = st && now - st.until < backoff.maxMs ? st.level + 1 : 0;
+        const waitMs = Math.min(backoff.initialMs * 2 ** level, backoff.maxMs);
+        this.backoffs.set(key, { until: now + waitMs, level });
+        this.buckets.delete(key);
+        return json({ allowed: false });
+      }
+
       if (mode === "record") {
         // 失敗確定時のみ呼ばれる想定。呼び出し元は超過時に "check" で先に弾くため、
         // この分岐だけで無制限に増え続けることはない
@@ -88,6 +123,11 @@ export class SessionDO implements DurableObject {
       const fresh = hits.filter((t) => now - t < SessionDO.GC_STALE_MS);
       if (fresh.length === 0) this.buckets.delete(key);
       else this.buckets.set(key, fresh);
+    }
+    // バックオフ明けから十分(エスカレート判定に使う最大待ち時間の上限 10 分を
+    // 超えて)経過したエントリは、以後の判定に影響しないため削除してよい
+    for (const [key, st] of this.backoffs) {
+      if (now - st.until > 600_000) this.backoffs.delete(key);
     }
   }
 

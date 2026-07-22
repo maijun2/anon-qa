@@ -101,9 +101,19 @@ Turnstile widget の許可ドメイン(ダッシュボード → Turnstile → D
      admin Cookie は失効しません**(Cookie の署名は `APP_SECRET` のみに依存するため)。
      Cookie も失効させたい場合は上記 1 も併せて実施してください。
 
+## セキュリティ
+
+- 全 HTML ページに Content-Security-Policy を付与(script は自ホストと Turnstile のみ許可)
+- Rate limit は「IP + 端末単位トークンハッシュ」の複合キーで、教室 WiFi(NAT)で同一 IP を
+  共有する参加者同士が制限を食い合わない設計
+- admin ログインの失敗は IP 別 + グローバルの 2 段で制限し、グローバル超過時も
+  指数バックオフ(最長 10 分)後に再試行できる(攻撃による講師の完全ロックアウトを防止)
+- 添付画像は SVG 拒否 + 配信時 sandbox CSP の二重防御
+
 ## 匿名性について
 
-- IP アドレス・User-Agent は DB にもログにも保存しない(rate limit は DO メモリ内カウンタのみ)
+- IP アドレス・User-Agent は DB にもログにも保存しない(rate limit のキーに使う IP・
+  トークンハッシュも Durable Object のメモリ内カウンタのみで、永続化しない)
 - ブラウザトークン(`crypto.randomUUID()`)は SHA-256 ハッシュのみ D1 に保存し、本人の投稿編集/削除判定と投票重複防止のみに使用
 - 講師を含め誰も質問者を特定できない(トークンハッシュは API レスポンスに含めない)
 - これらはテスト(`test/anonymity.test.ts`)で担保している

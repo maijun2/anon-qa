@@ -1,9 +1,10 @@
 // 匿名性ルールの担保:
 //   * 全テーブルに IP / User-Agent 系のカラムが存在しないこと
 //   * ブラウザトークンは生値ではなく SHA-256 ハッシュのみ保存されること
-import { SELF, env } from "cloudflare:test";
+import { SELF, env, runInDurableObject } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { sha256Hex } from "../src/auth";
+import type { SessionDO } from "../src/session-do";
 import {
   BASE,
   adminLogin,
@@ -117,5 +118,30 @@ describe("匿名性", () => {
     });
     const adminBody = await adminRes.text();
     expect(adminBody).not.toContain("tokenHash");
+  });
+
+  it("rate limit の複合キーはハッシュのみを含み、DO メモリ外へ永続化されない", async () => {
+    const cookie = await adminLogin();
+    const session = await createSession(cookie);
+    const ctx = await enter(session.code);
+    // 質問投稿で rate limit(IP + 匿名トークンハッシュの複合キー)が記録される
+    await postQuestion(ctx);
+
+    const myHash = await sha256Hex(ctx.anonToken);
+    const stub = env.SESSION_DO.get(env.SESSION_DO.idFromName(session.code));
+    await runInDurableObject(stub, async (instance: SessionDO, state) => {
+      // DO storage へ一切永続化していない(メモリ内カウンタのみ)
+      expect((await state.storage.list()).size).toBe(0);
+
+      const keys = [
+        ...(instance as unknown as { buckets: Map<string, number[]> }).buckets.keys(),
+      ];
+      // 複合キーとして端末のトークンハッシュが記録されている
+      expect(keys.some((k) => k.includes(myHash))).toBe(true);
+      // 生トークンはどのキーにも現れない
+      for (const k of keys) {
+        expect(k).not.toContain(ctx.anonToken);
+      }
+    });
   });
 });

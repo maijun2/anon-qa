@@ -29,6 +29,9 @@
     editingAnswerId: null,
     // 自分の返信 ID。ブロードキャストの isMine は常に false のため、ここで復元する
     myAnswerIds: new Set(),
+    // カーソルページネーション(50 件ずつ)。null は最終ページ到達済み
+    nextCursor: null,
+    loadingMore: false,
   };
 
   // ---------- タブ ----------
@@ -88,11 +91,43 @@
   async function loadQuestions() {
     const data = await AnonQA.api(code, "/questions");
     state.questions = data.questions;
+    state.nextCursor = data.nextCursor || null;
     for (const q of state.questions) {
       for (const a of q.answers) if (a.isMine) state.myAnswerIds.add(a.id);
     }
     renderQuestions();
   }
+
+  // 無限スクロール: 番兵が画面に入ったら次ページ(50 件)を追加取得する。
+  // WebSocket で既に受信済みの質問は id で重複排除する
+  async function loadMoreQuestions() {
+    if (!state.nextCursor || state.loadingMore) return;
+    state.loadingMore = true;
+    $("question-loading").hidden = false;
+    try {
+      const data = await AnonQA.api(code, `/questions?cursor=${encodeURIComponent(state.nextCursor)}`);
+      state.nextCursor = data.nextCursor || null;
+      for (const q of data.questions) {
+        if (state.questions.some((x) => x.id === q.id)) continue;
+        state.questions.push(q);
+        for (const a of q.answers) if (a.isMine) state.myAnswerIds.add(a.id);
+      }
+      renderQuestions();
+      // 追加後も番兵が画面内に残っている(リストが短い)場合は続けて取得する
+      if (state.nextCursor && $("question-sentinel").getBoundingClientRect().top < window.innerHeight) {
+        setTimeout(loadMoreQuestions, 0);
+      }
+    } catch (e) {
+      // 失敗しても次に番兵が見えたタイミングで再試行される
+    } finally {
+      state.loadingMore = false;
+      $("question-loading").hidden = true;
+    }
+  }
+
+  new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) loadMoreQuestions();
+  }).observe($("question-sentinel"));
 
   async function loadMaterials() {
     const data = await AnonQA.api(code, "/materials");

@@ -44,6 +44,10 @@
       </div>
       <div id="question-list" class="stack"></div>
       <p id="question-empty" class="muted" hidden>質問はまだありません。</p>
+
+      <!-- 無限スクロール用の番兵。画面に入ると次の 50 件を追加取得する -->
+      <div id="question-sentinel" aria-hidden="true"></div>
+      <p id="question-loading" class="muted small" hidden>読み込み中…</p>
     </section>
 
     <section id="tab-materials" class="tab-panel" hidden>

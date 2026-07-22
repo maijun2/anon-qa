@@ -1,7 +1,7 @@
 import { SELF, env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { cleanupExpiredSessions } from "../src/cron";
-import { ADMIN_RATE_LIMIT_KEY } from "../src/realtime";
+import { ADMIN_RATE_LIMIT_KEY, checkRateLimit } from "../src/realtime";
 import {
   ADMIN_PASSWORD,
   BASE,
@@ -131,6 +131,79 @@ describe("質問", () => {
       body: JSON.stringify({ body: "6 件目" }),
     });
     expect(res.status).toBe(429);
+  });
+
+  it(
+    "同一 IP(教室 NAT)配下の 40 クライアントが通常ペースで操作しても 429 にならない",
+    { timeout: 120_000 },
+    async () => {
+      const cookie = await adminLogin();
+      const session = await createSession(cookie, "NAT 教室想定");
+      const base = await enter(session.code);
+      // 教室の WiFi/NAT を想定し、全クライアントが同一 IP を共有する。
+      // 入室トークンはセッション共通のため使い回し、匿名トークンのみ端末ごとに変える
+      const NAT_IP = "203.0.113.40";
+      const clients = Array.from({ length: 40 }, () => ({
+        code: base.code,
+        entryToken: base.entryToken,
+        anonToken: crypto.randomUUID(),
+      }));
+      const headersOf = (c: (typeof clients)[number]) => ({
+        ...participantHeaders(c),
+        "CF-Connecting-IP": NAT_IP,
+      });
+
+      // 各自が通常ペースの上限(質問 5/60s・投票 10/60s)まで操作する
+      const statuses = (
+        await Promise.all(
+          clients.map(async (c, i) => {
+            const results: number[] = [];
+            let questionId = "";
+            for (let n = 0; n < 5; n++) {
+              const res = await SELF.fetch(`${BASE}/api/s/${c.code}/questions`, {
+                method: "POST",
+                headers: headersOf(c),
+                body: JSON.stringify({ body: `NAT テスト ${i}-${n}` }),
+              });
+              results.push(res.status);
+              if (res.status === 201) {
+                questionId = ((await res.json()) as { question: { id: string } }).question.id;
+              }
+            }
+            for (let n = 0; n < 10; n++) {
+              const res = await SELF.fetch(`${BASE}/api/s/${c.code}/questions/${questionId}/vote`, {
+                method: n % 2 === 0 ? "PUT" : "DELETE",
+                headers: headersOf(c),
+              });
+              results.push(res.status);
+            }
+            return results;
+          }),
+        )
+      ).flat();
+
+      expect(statuses).toHaveLength(40 * 15);
+      expect(statuses).not.toContain(429);
+    },
+  );
+
+  it("匿名トークンなしのリクエストは IP 単独キーで現行値の 10 倍まで許容される", async () => {
+    const mkReq = (token?: string) =>
+      new Request("https://example.com/", {
+        headers: { "CF-Connecting-IP": "203.0.113.99", ...(token ? { "X-Anon-Token": token } : {}) },
+      });
+    // image バケット(limit 10)。トークンなしは 10 倍の 100 回まで許容され、101 回目で拒否
+    for (let i = 0; i < 100; i++) {
+      expect(await checkRateLimit(env, "LOOSE-TEST", mkReq(), "image"), `${i + 1} 回目`).toBe(true);
+    }
+    expect(await checkRateLimit(env, "LOOSE-TEST", mkReq(), "image")).toBe(false);
+
+    // トークンありは複合キーが独立しており、IP 単独キーの消費と無関係に通常 limit で効く
+    const token = crypto.randomUUID();
+    for (let i = 0; i < 10; i++) {
+      expect(await checkRateLimit(env, "LOOSE-TEST", mkReq(token), "image"), `${i + 1} 回目`).toBe(true);
+    }
+    expect(await checkRateLimit(env, "LOOSE-TEST", mkReq(token), "image")).toBe(false);
   });
 });
 
@@ -298,6 +371,65 @@ describe("admin 認証", () => {
     expect((await call("check")).allowed).toBe(false);
 
     await new Promise((resolve) => setTimeout(resolve, 600));
+    expect((await call("check")).allowed).toBe(true);
+  });
+
+  it("攻撃 IP からの失敗連打中でも、別 IP の正規パスワードログインは成功する", async () => {
+    // 単一 IP の連打は IP 別サブバケット(5 失敗/60s)で先に止まり、
+    // グローバル枠(全 IP 合算 20 失敗/60s)を消費しない構造の検証
+    const attackerHeaders = { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.66" };
+    for (let i = 0; i < 30; i++) {
+      const res = await SELF.fetch(`${BASE}/api/admin/login`, {
+        method: "POST",
+        headers: attackerHeaders,
+        body: JSON.stringify({ password: "attacker-wrong" }),
+      });
+      expect([401, 429]).toContain(res.status);
+    }
+
+    const legit = await SELF.fetch(`${BASE}/api/admin/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "198.51.100.20" },
+      body: JSON.stringify({ password: ADMIN_PASSWORD }),
+    });
+    expect(legit.status).toBe(200);
+    expect(legit.headers.get("Set-Cookie")).toContain("admin_session=");
+  });
+
+  it("グローバル超過時は完全遮断ではなく指数バックオフで再試行可能になる", { timeout: 15_000 }, async () => {
+    // 本番値(30s→60s→…上限 10 分)では実時間を待てないため、本番コードと同じ
+    // DO エンドポイントを短い backoff 値で直接叩いて挙動を検証する
+    const stub = env.SESSION_DO.get(env.SESSION_DO.idFromName(ADMIN_RATE_LIMIT_KEY));
+    const call = (mode: "check" | "record") =>
+      stub
+        .fetch("https://session-do/ratelimit", {
+          method: "POST",
+          body: JSON.stringify({
+            key: "login:backoff-test",
+            limit: 2,
+            windowMs: 60_000,
+            mode,
+            backoff: { initialMs: 500, maxMs: 5_000 },
+          }),
+        })
+        .then((r) => r.json() as Promise<{ allowed: boolean }>);
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    // limit(2)まで失敗を記録 → 超過検知でバックオフ開始(500ms)
+    await call("record");
+    await call("record");
+    expect((await call("check")).allowed).toBe(false);
+    // バックオフ明けは窓がクリアされ、再試行できる(完全遮断ではない)
+    await sleep(700);
+    expect((await call("check")).allowed).toBe(true);
+
+    // 明けて間もなく再超過するとエスカレート(500ms → 1000ms)
+    await call("record");
+    await call("record");
+    expect((await call("check")).allowed).toBe(false);
+    await sleep(700); // 初回と同じ 500ms では明けない(= エスカレートしている)
+    expect((await call("check")).allowed).toBe(false);
+    await sleep(700); // 1000ms 経過後は再試行可能
     expect((await call("check")).allowed).toBe(true);
   });
 });

@@ -3,7 +3,7 @@ import { handleEnter, handleParticipantApi } from "./api/participant";
 import { verifyAdmin, verifyEntry } from "./auth";
 import { cleanupExpiredSessions } from "./cron";
 import { getSessionByCode } from "./db";
-import { errorJson, json } from "./http";
+import { errorJson, HTML_CSP, json } from "./http";
 import { forwardWebSocket } from "./realtime";
 import { SessionDO } from "./session-do";
 import type { Env } from "./types";
@@ -15,6 +15,8 @@ export { SessionDO };
  * - X-Frame-Options: clickjacking 防止(admin を含め iframe 埋め込み不可)
  * - X-Content-Type-Options: MIME スニフィング抑止
  * - Referrer-Policy: 外部リンク遷移時に参加ページ URL を漏らさない(匿名性)
+ * - Content-Security-Policy: HTML ページのみ。画像配信(src/images.ts)は
+ *   より厳しい専用 CSP(sandbox)を既に持つため上書きしない
  * WebSocket の Upgrade(101)レスポンスは webSocket プロパティを保持するため対象外。
  */
 function withSecurityHeaders(res: Response): Response {
@@ -23,6 +25,10 @@ function withSecurityHeaders(res: Response): Response {
   headers.set("X-Frame-Options", "DENY");
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "no-referrer");
+  const isHtml = (headers.get("Content-Type") ?? "").includes("text/html");
+  if (isHtml && !headers.has("Content-Security-Policy")) {
+    headers.set("Content-Security-Policy", HTML_CSP);
+  }
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 }
 
