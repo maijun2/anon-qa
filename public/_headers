@@ -1,6 +1,9 @@
 # 静的配信されるアセット(入室ページ / css / js 等、run_worker_first 対象外)への
 # セキュリティヘッダ。worker 経由のルートは src/index.ts の withSecurityHeaders が付与する。
+# CSP は src/index.ts の HTML_CSP と同じ値を維持すること(変更時は両方を同期)。
+# HTML 以外のアセットにも付与されるが実害はない(document 以外では無視される)。
 /*
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'

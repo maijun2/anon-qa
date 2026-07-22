@@ -21,34 +21,6 @@
     </div>
   </main>
   <script src="/js/admin-common.js"></script>
-  <script>
-    (async () => {
-      // ログイン済みならダッシュボードへ(素の fetch で 401 リダイレクトループを回避)
-      const me = await fetch("/api/admin/me").catch(() => null);
-      if (me && me.ok) {
-        location.href = "/admin/dashboard";
-        return;
-      }
-
-      const errorEl = document.getElementById("login-error");
-      const btn = document.getElementById("login-btn");
-      document.getElementById("login-form").addEventListener("submit", async (ev) => {
-        ev.preventDefault();
-        errorEl.hidden = true;
-        btn.disabled = true;
-        try {
-          await AdminQA.api("/login", {
-            method: "POST",
-            body: JSON.stringify({ password: document.getElementById("password-input").value }),
-          });
-          location.href = "/admin/dashboard";
-        } catch (e) {
-          errorEl.textContent = e.message;
-          errorEl.hidden = false;
-          btn.disabled = false;
-        }
-      });
-    })();
-  </script>
+  <script src="/js/admin-login.js"></script>
 </body>
 </html>
