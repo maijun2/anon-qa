@@ -1,7 +1,7 @@
 import { SELF, env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { cleanupExpiredSessions } from "../src/cron";
-import { ADMIN_RATE_LIMIT_KEY } from "../src/realtime";
+import { ADMIN_RATE_LIMIT_KEY, checkRateLimit } from "../src/realtime";
 import {
   ADMIN_PASSWORD,
   BASE,
@@ -131,6 +131,79 @@ describe("質問", () => {
       body: JSON.stringify({ body: "6 件目" }),
     });
     expect(res.status).toBe(429);
+  });
+
+  it(
+    "同一 IP(教室 NAT)配下の 40 クライアントが通常ペースで操作しても 429 にならない",
+    { timeout: 120_000 },
+    async () => {
+      const cookie = await adminLogin();
+      const session = await createSession(cookie, "NAT 教室想定");
+      const base = await enter(session.code);
+      // 教室の WiFi/NAT を想定し、全クライアントが同一 IP を共有する。
+      // 入室トークンはセッション共通のため使い回し、匿名トークンのみ端末ごとに変える
+      const NAT_IP = "203.0.113.40";
+      const clients = Array.from({ length: 40 }, () => ({
+        code: base.code,
+        entryToken: base.entryToken,
+        anonToken: crypto.randomUUID(),
+      }));
+      const headersOf = (c: (typeof clients)[number]) => ({
+        ...participantHeaders(c),
+        "CF-Connecting-IP": NAT_IP,
+      });
+
+      // 各自が通常ペースの上限(質問 5/60s・投票 10/60s)まで操作する
+      const statuses = (
+        await Promise.all(
+          clients.map(async (c, i) => {
+            const results: number[] = [];
+            let questionId = "";
+            for (let n = 0; n < 5; n++) {
+              const res = await SELF.fetch(`${BASE}/api/s/${c.code}/questions`, {
+                method: "POST",
+                headers: headersOf(c),
+                body: JSON.stringify({ body: `NAT テスト ${i}-${n}` }),
+              });
+              results.push(res.status);
+              if (res.status === 201) {
+                questionId = ((await res.json()) as { question: { id: string } }).question.id;
+              }
+            }
+            for (let n = 0; n < 10; n++) {
+              const res = await SELF.fetch(`${BASE}/api/s/${c.code}/questions/${questionId}/vote`, {
+                method: n % 2 === 0 ? "PUT" : "DELETE",
+                headers: headersOf(c),
+              });
+              results.push(res.status);
+            }
+            return results;
+          }),
+        )
+      ).flat();
+
+      expect(statuses).toHaveLength(40 * 15);
+      expect(statuses).not.toContain(429);
+    },
+  );
+
+  it("匿名トークンなしのリクエストは IP 単独キーで現行値の 10 倍まで許容される", async () => {
+    const mkReq = (token?: string) =>
+      new Request("https://example.com/", {
+        headers: { "CF-Connecting-IP": "203.0.113.99", ...(token ? { "X-Anon-Token": token } : {}) },
+      });
+    // image バケット(limit 10)。トークンなしは 10 倍の 100 回まで許容され、101 回目で拒否
+    for (let i = 0; i < 100; i++) {
+      expect(await checkRateLimit(env, "LOOSE-TEST", mkReq(), "image"), `${i + 1} 回目`).toBe(true);
+    }
+    expect(await checkRateLimit(env, "LOOSE-TEST", mkReq(), "image")).toBe(false);
+
+    // トークンありは複合キーが独立しており、IP 単独キーの消費と無関係に通常 limit で効く
+    const token = crypto.randomUUID();
+    for (let i = 0; i < 10; i++) {
+      expect(await checkRateLimit(env, "LOOSE-TEST", mkReq(token), "image"), `${i + 1} 回目`).toBe(true);
+    }
+    expect(await checkRateLimit(env, "LOOSE-TEST", mkReq(token), "image")).toBe(false);
   });
 });
 
