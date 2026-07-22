@@ -31,6 +31,43 @@ export const RATE_LIMITS = {
 // admin ログインは特定セッションに紐付かないため、専用の固定 DO 名に集約する
 export const ADMIN_RATE_LIMIT_KEY = "__admin__";
 
+// admin login のグローバル(全 IP 合算)失敗バケット。IP 別サブバケットで先に
+// 止まるため、ここに到達するのは複数 IP からの分散攻撃時のみ。
+const LOGIN_GLOBAL_KEY = "login:__global__";
+const LOGIN_GLOBAL_LIMIT = 20;
+// グローバル超過時は完全遮断でなく指数バックオフ: 30s → 60s → 120s → … → 上限 10 分
+const LOGIN_GLOBAL_BACKOFF = { initialMs: 30_000, maxMs: 600_000 };
+
+/**
+ * admin login の rate limit(失敗のみカウントする 2 段構え)。
+ * 1. IP 別サブバケット(login:IP、5 失敗/60s): 単一 IP からの連打はここで先に
+ *    止まり、グローバル枠を消費しない(他 IP の正規ログインを巻き込まない)
+ * 2. グローバルバケット(全 IP 合算 20 失敗/60s): 分散攻撃時のみ発動。
+ *    超過時は指数バックオフで、バックオフ明けには再試行できる
+ * IP・カウンタとも DO のメモリ内のみで扱い、永続化・ログ出力しない。
+ */
+export async function checkLoginRateLimit(
+  env: Env,
+  request: Request,
+  mode: "check" | "record",
+): Promise<boolean> {
+  const ipAllowed = await checkRateLimit(env, ADMIN_RATE_LIMIT_KEY, request, "login", mode);
+  // check で IP 別に弾かれた場合はグローバルを参照しない(枠を消費させない)
+  if (mode === "check" && !ipAllowed) return false;
+  const res = await sessionStub(env, ADMIN_RATE_LIMIT_KEY).fetch("https://session-do/ratelimit", {
+    method: "POST",
+    body: JSON.stringify({
+      key: LOGIN_GLOBAL_KEY,
+      limit: LOGIN_GLOBAL_LIMIT,
+      windowMs: RATE_LIMITS.login.windowMs,
+      mode,
+      backoff: LOGIN_GLOBAL_BACKOFF,
+    }),
+  });
+  const globalAllowed = ((await res.json()) as { allowed: boolean }).allowed;
+  return ipAllowed && globalAllowed;
+}
+
 // 匿名トークンなしのリクエストに適用する IP 単独キーの緩和倍率。
 // 教室 NAT では 1 つの IP を数十人が共有するため、IP 単独の厳しい制限は
 // 正当な参加者への誤爆になる。トークンなしの異常リクエスト対策としてのみ残す。

@@ -373,6 +373,65 @@ describe("admin 認証", () => {
     await new Promise((resolve) => setTimeout(resolve, 600));
     expect((await call("check")).allowed).toBe(true);
   });
+
+  it("攻撃 IP からの失敗連打中でも、別 IP の正規パスワードログインは成功する", async () => {
+    // 単一 IP の連打は IP 別サブバケット(5 失敗/60s)で先に止まり、
+    // グローバル枠(全 IP 合算 20 失敗/60s)を消費しない構造の検証
+    const attackerHeaders = { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.66" };
+    for (let i = 0; i < 30; i++) {
+      const res = await SELF.fetch(`${BASE}/api/admin/login`, {
+        method: "POST",
+        headers: attackerHeaders,
+        body: JSON.stringify({ password: "attacker-wrong" }),
+      });
+      expect([401, 429]).toContain(res.status);
+    }
+
+    const legit = await SELF.fetch(`${BASE}/api/admin/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "198.51.100.20" },
+      body: JSON.stringify({ password: ADMIN_PASSWORD }),
+    });
+    expect(legit.status).toBe(200);
+    expect(legit.headers.get("Set-Cookie")).toContain("admin_session=");
+  });
+
+  it("グローバル超過時は完全遮断ではなく指数バックオフで再試行可能になる", { timeout: 15_000 }, async () => {
+    // 本番値(30s→60s→…上限 10 分)では実時間を待てないため、本番コードと同じ
+    // DO エンドポイントを短い backoff 値で直接叩いて挙動を検証する
+    const stub = env.SESSION_DO.get(env.SESSION_DO.idFromName(ADMIN_RATE_LIMIT_KEY));
+    const call = (mode: "check" | "record") =>
+      stub
+        .fetch("https://session-do/ratelimit", {
+          method: "POST",
+          body: JSON.stringify({
+            key: "login:backoff-test",
+            limit: 2,
+            windowMs: 60_000,
+            mode,
+            backoff: { initialMs: 500, maxMs: 5_000 },
+          }),
+        })
+        .then((r) => r.json() as Promise<{ allowed: boolean }>);
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    // limit(2)まで失敗を記録 → 超過検知でバックオフ開始(500ms)
+    await call("record");
+    await call("record");
+    expect((await call("check")).allowed).toBe(false);
+    // バックオフ明けは窓がクリアされ、再試行できる(完全遮断ではない)
+    await sleep(700);
+    expect((await call("check")).allowed).toBe(true);
+
+    // 明けて間もなく再超過するとエスカレート(500ms → 1000ms)
+    await call("record");
+    await call("record");
+    expect((await call("check")).allowed).toBe(false);
+    await sleep(700); // 初回と同じ 500ms では明けない(= エスカレートしている)
+    expect((await call("check")).allowed).toBe(false);
+    await sleep(700); // 1000ms 経過後は再試行可能
+    expect((await call("check")).allowed).toBe(true);
+  });
 });
 
 describe("SessionDO rate limit バケットの GC", () => {
