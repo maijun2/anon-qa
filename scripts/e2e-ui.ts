@@ -87,6 +87,8 @@ async function main(): Promise<void> {
   const answerText = await page.textContent("#question-detail .answers");
   check("回答が右ペインのスレッドに表示", answerText?.includes("E2E からの講師回答です") === true);
   check("回答者ラベルが「講師」", answerText?.includes("講師") === true);
+  // 回答送信後に入力欄がクリアされる(renderDetail の下書き退避で送信済みテキストが残らない)
+  check("回答送信後に入力欄が空になる", (await page.inputValue("#question-detail .answer-input")) === "");
   check(
     "質問が回答済みバッジに変わる",
     (await page.locator("#question-detail .badge-answered").count()) === 1,
