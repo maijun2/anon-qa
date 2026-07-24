@@ -9,11 +9,24 @@
     questions: [],
     materials: [],
     surveys: [],
-    sort: "new",
-    answeringId: null,
+    // トリアージ・検索・並べ替え(絞り込みはサーバサイド)。UI 既定は「未回答 × いいね順」
+    filter: "open",
+    sort: "votes",
+    q: "",
+    counts: { open: 0, done: 0, total: 0 },
+    // 2 ペイン: 右ペインに表示中の質問 ID と、描画で消えないよう退避する回答下書き
+    selectedId: null,
+    answerDraft: "",
     answerPendingImage: null,
     editingMaterialId: null,
-    // カーソルページネーション(50 件ずつ)。null は最終ページ到達済み
+    // 一括モデレーション(選択モード)
+    bulkMode: false,
+    checkedIds: new Set(),
+    bulkDeleting: false,
+    // 新着ピル: 新規質問はここに溜め、クリックで初めて一覧へ反映する
+    pendingNew: [],
+    flashIds: new Set(),
+    // カーソルページネーション(50 件ずつ)。null は最終ページ到達済み(votes/検索時は一括取得)
     nextCursor: null,
     loadingMore: false,
   };
@@ -33,20 +46,31 @@
 
   init();
 
+  /** 質問一覧のクエリ(トリアージ・並べ替え・検索 + カーソル)を組み立てる */
+  function listQuery(cursor) {
+    const params = new URLSearchParams({ status: state.filter, sort: state.sort });
+    if (state.q) params.set("q", state.q);
+    if (cursor) params.set("cursor", cursor);
+    return params.toString();
+  }
+
   async function init() {
     let data;
     try {
-      data = await AdminQA.api(`/sessions/${sessionId}`);
+      data = await AdminQA.api(`/sessions/${sessionId}?${listQuery()}`);
     } catch (e) {
       return;
     }
     state.session = data.session;
     state.questions = data.questions;
     state.nextCursor = data.nextCursor || null;
+    state.counts = data.counts;
     state.materials = data.materials;
     state.surveys = data.surveys;
     renderHeader();
+    renderCounts();
     renderQuestions();
+    renderDetail();
     renderMaterials();
     renderSurveys();
     AnonQA.connectWs({
@@ -65,13 +89,13 @@
     state.loadingMore = true;
     $("question-loading").hidden = false;
     try {
-      const data = await AdminQA.api(
-        `/sessions/${sessionId}/questions?cursor=${encodeURIComponent(state.nextCursor)}`,
-      );
+      const data = await AdminQA.api(`/sessions/${sessionId}/questions?${listQuery(state.nextCursor)}`);
       state.nextCursor = data.nextCursor || null;
+      state.counts = data.counts;
       for (const q of data.questions) {
         if (!state.questions.some((x) => x.id === q.id)) state.questions.push(q);
       }
+      renderCounts();
       renderQuestions();
       // 追加後も番兵が画面内に残っている(リストが短い)場合は続けて取得する
       if (state.nextCursor && $("question-sentinel").getBoundingClientRect().top < window.innerHeight) {
@@ -82,6 +106,23 @@
     } finally {
       state.loadingMore = false;
       $("question-loading").hidden = true;
+    }
+  }
+
+  // フィルタ/ソート/検索の変更時は一覧を作り直す(チェック状態はリセット)
+  async function reloadQuestions() {
+    try {
+      const data = await AdminQA.api(`/sessions/${sessionId}/questions?${listQuery()}`);
+      state.questions = data.questions;
+      state.nextCursor = data.nextCursor || null;
+      state.counts = data.counts;
+      state.checkedIds.clear();
+      renderCounts();
+      renderBulkbar();
+      renderQuestions();
+      renderDetail();
+    } catch (e) {
+      alert(e.message);
     }
   }
 
@@ -124,25 +165,63 @@
     }
   });
 
+  /** isAnswered の変化を counts に反映しつつ質問を更新する(自操作・WS の両方から使う) */
+  function applyQuestionUpdate(q, updated) {
+    if (q.isAnswered !== updated.isAnswered) {
+      state.counts.open += updated.isAnswered ? -1 : 1;
+      state.counts.done += updated.isAnswered ? 1 : -1;
+    }
+    Object.assign(q, updated);
+  }
+
+  /** 一覧から質問を取り除き counts / 選択状態を整合させる(自操作・WS の両方から使う) */
+  function removeQuestionLocal(questionId) {
+    const existing = state.questions.find((q) => q.id === questionId);
+    if (existing) {
+      state.counts.total -= 1;
+      state.counts[existing.isAnswered ? "done" : "open"] -= 1;
+      state.questions = state.questions.filter((q) => q.id !== questionId);
+    }
+    state.checkedIds.delete(questionId);
+    if (state.selectedId === questionId) state.selectedId = null;
+  }
+
   function handleWsMessage(msg) {
     const p = msg.payload || {};
     switch (msg.type) {
-      case "question:new":
+      case "question:new": {
+        if (state.questions.some((q) => q.id === p.question.id)) break;
+        state.questions.unshift(p.question);
+        state.counts.open += 1;
+        state.counts.total += 1;
+        renderCounts();
+        renderQuestions();
+        AnonQA.playNotify();
+        break;
+      }
       case "question:updated": {
         const existing = state.questions.find((q) => q.id === p.question.id);
-        if (existing) Object.assign(existing, p.question);
+        if (existing) applyQuestionUpdate(existing, p.question);
         else state.questions.unshift(p.question);
+        renderCounts();
         renderQuestions();
-        if (msg.type === "question:new" && !existing) AnonQA.playNotify();
+        renderDetail();
         break;
       }
       case "question:deleted":
-        state.questions = state.questions.filter((q) => q.id !== p.questionId);
+        removeQuestionLocal(p.questionId);
+        renderCounts();
+        renderBulkbar();
         renderQuestions();
+        renderDetail();
         break;
       case "vote:changed": {
         const q = state.questions.find((x) => x.id === p.questionId);
-        if (q) { q.votes = p.votes; renderQuestions(); }
+        if (q) {
+          q.votes = p.votes;
+          renderQuestions();
+          renderDetail();
+        }
         break;
       }
       case "material:changed":
@@ -165,94 +244,214 @@
     }
   }
 
-  // ---------- 質問管理 ----------
-  document.querySelectorAll(".sort-btn").forEach((btn) => {
+  // ---------- 質問管理(トリアージ / 検索 / 並べ替え / 2 ペイン) ----------
+  const FILTER_LABEL = { open: "未回答", done: "回答済み", all: "すべて" };
+  const SORT_LABEL = { votes: "いいね順", new: "新着順", old: "古い順" };
+
+  document.querySelectorAll(".seg-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      state.sort = btn.dataset.sort;
-      document.querySelectorAll(".sort-btn").forEach((b) => b.classList.toggle("active", b === btn));
-      renderQuestions();
+      if (state.filter === btn.dataset.status) return;
+      state.filter = btn.dataset.status;
+      document.querySelectorAll(".seg-btn").forEach((b) => b.classList.toggle("active", b === btn));
+      reloadQuestions();
     });
   });
 
+  $("question-sort").addEventListener("change", () => {
+    state.sort = $("question-sort").value;
+    reloadQuestions();
+  });
+
+  // 検索はデバウンス(250ms)してサーバへ問い合わせる
+  let searchTimer = null;
+  $("question-search").addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      const value = $("question-search").value.trim();
+      if (value === state.q) return;
+      state.q = value;
+      reloadQuestions();
+    }, 250);
+  });
+
+  function renderCounts() {
+    $("count-open").textContent = String(state.counts.open);
+    $("count-done").textContent = String(state.counts.done);
+    $("count-all").textContent = String(state.counts.total);
+  }
+
+  function matchesFilter(q) {
+    if (state.filter === "open") return !q.isAnswered;
+    if (state.filter === "done") return q.isAnswered;
+    return true;
+  }
+
+  // サーバ絞り込み済みの一覧に WebSocket 更新が混ざるため、表示直前にも同じ条件を適用する
+  function visibleQuestions() {
+    const keyword = state.q.toLowerCase();
+    return state.questions
+      .filter((q) => matchesFilter(q) && (!keyword || q.body.toLowerCase().includes(keyword)))
+      .sort((a, b) => {
+        if (state.sort === "votes") return b.votes - a.votes || b.createdAt - a.createdAt;
+        if (state.sort === "old") return a.createdAt - b.createdAt;
+        return b.createdAt - a.createdAt;
+      });
+  }
+
+  function statusBadge(q) {
+    return q.isAnswered
+      ? '<span class="badge badge-answered">回答済み</span>'
+      : '<span class="badge badge-open">未回答</span>';
+  }
+
+  function qitemHtml(q) {
+    const classes = ["qitem"];
+    if (q.id === state.selectedId) classes.push("sel");
+    if (state.flashIds.has(q.id)) classes.push("flash");
+    return `
+      <div class="${classes.join(" ")}" data-id="${esc(q.id)}" role="button" tabindex="0">
+        ${state.bulkMode ? `<input type="checkbox" class="bulk-check" data-role="bulk-item" ${state.checkedIds.has(q.id) ? "checked" : ""} aria-label="一括操作の対象にする">` : ""}
+        <div class="votecol${q.votes >= 5 ? " hot" : ""}"><span class="votecol-n">${q.votes}</span><span class="votecol-l">いいね</span></div>
+        <div class="qmain">
+          <div class="qmeta">
+            <span>${AnonQA.formatJst(q.createdAt)}</span>
+            ${statusBadge(q)}
+            ${q.answers.length ? `<span>💬 ${q.answers.length}</span>` : ""}
+            ${q.imageKey ? "<span>🖼 画像</span>" : ""}
+          </div>
+          <div class="qtext">${esc(q.body)}</div>
+        </div>
+      </div>`;
+  }
+
   function renderQuestions() {
-    const sorted = [...state.questions].sort((a, b) =>
-      state.sort === "votes" ? b.votes - a.votes || b.createdAt - a.createdAt : b.createdAt - a.createdAt,
-    );
-    $("question-list").innerHTML = sorted.map((q) => `
-      <article class="card question-card${q.isAnswered ? " answered" : ""}" data-id="${esc(q.id)}">
-        <div class="question-head">
-          <span class="muted small">${AnonQA.formatJst(q.createdAt)}</span>
-          <span class="muted small">👍 ${q.votes}</span>
-          ${q.isAnswered ? '<span class="badge badge-answered">回答済み</span>' : ""}
-        </div>
-        <p class="question-body">${AnonQA.linkify(q.body)}</p>
-        ${q.imageKey ? `<a href="${imageUrl(q.imageKey)}" target="_blank" rel="noopener"><img class="question-image" src="${imageUrl(q.imageKey)}" alt="添付画像" loading="lazy"></a>` : ""}
-        ${q.answers.length ? `<div class="answers">${q.answers.map((a) => `
-          <div class="answer${a.authorRole === "instructor" ? "" : " answer-participant"}" data-answer-id="${esc(a.id)}">
-            <span class="answer-label${a.authorRole === "instructor" ? "" : " answer-label-participant"}">${a.authorRole === "instructor" ? "講師" : "参加者"}</span>
-            ${a.body ? `<p>${AnonQA.linkify(a.body)}</p>` : ""}
-            ${a.imageKey ? `<a href="${imageUrl(a.imageKey)}" target="_blank" rel="noopener"><img class="answer-image" src="${imageUrl(a.imageKey)}" alt="添付画像" loading="lazy"></a>` : ""}
-            <span class="muted small">${AnonQA.formatJst(a.createdAt)}${a.updatedAt > a.createdAt ? "(編集済み)" : ""}</span>
-            <button class="btn btn-small btn-ghost btn-danger-text" data-action="delete-answer">削除</button>
-          </div>`).join("")}</div>` : ""}
-        ${state.answeringId === q.id ? `
-          <div class="field" style="margin-top: 8px;">
-            <textarea class="textarea answer-input" rows="3" placeholder="回答を入力(画像の貼り付け・添付も可能)"></textarea>
-            ${state.answerPendingImage ? `
-              <div class="image-preview">
-                <img src="${state.answerPendingImage.previewUrl}" alt="添付画像プレビュー">
-                <button type="button" class="btn btn-ghost btn-small" data-action="answer-image-remove">添付を取り消す</button>
-              </div>` : ""}
-            <div class="form-row">
-              <label class="btn btn-ghost btn-small file-label">
-                画像を添付
-                <input type="file" class="answer-image-input" accept="image/png,image/jpeg,image/gif,image/webp">
-              </label>
-              <div class="admin-item-actions">
-                <button class="btn btn-primary btn-small" data-action="submit-answer">回答を送信</button>
-                <button class="btn btn-ghost btn-small" data-action="cancel-answer">キャンセル</button>
-              </div>
-            </div>
+    const items = visibleQuestions();
+    $("list-heading").textContent =
+      `${FILTER_LABEL[state.filter]}(${SORT_LABEL[state.sort]})${state.q ? " ・検索中" : ""}`;
+    $("question-list").innerHTML = items.map(qitemHtml).join("");
+    $("question-empty").hidden = items.length > 0;
+    state.flashIds.clear();
+  }
+
+  function answerHtml(a) {
+    const isInstructor = a.authorRole === "instructor";
+    return `
+      <div class="answer${isInstructor ? "" : " answer-participant"}" data-answer-id="${esc(a.id)}">
+        <span class="answer-label${isInstructor ? "" : " answer-label-participant"}">${isInstructor ? "講師" : "参加者"}</span>
+        ${a.body ? `<p>${AnonQA.linkify(a.body)}</p>` : ""}
+        ${a.imageKey ? `<a href="${imageUrl(a.imageKey)}" target="_blank" rel="noopener"><img class="answer-image" src="${imageUrl(a.imageKey)}" alt="添付画像" loading="lazy"></a>` : ""}
+        <span class="muted small">${AnonQA.formatJst(a.createdAt)}${a.updatedAt > a.createdAt ? "(編集済み)" : ""}</span>
+        <button class="btn btn-small btn-ghost btn-danger-text" data-action="delete-answer">削除</button>
+      </div>`;
+  }
+
+  // 右ペイン(詳細 + 回答入力)。WebSocket 更新で再描画されても入力中の回答と
+  // フォーカス位置が失われないよう、textarea の状態を退避して復元する
+  function renderDetail() {
+    const detail = $("question-detail");
+    const prevInput = detail.querySelector(".answer-input");
+    if (prevInput) state.answerDraft = prevInput.value;
+    const hadFocus = prevInput && document.activeElement === prevInput;
+    const selStart = hadFocus ? prevInput.selectionStart : 0;
+    const selEnd = hadFocus ? prevInput.selectionEnd : 0;
+
+    const q = state.questions.find((x) => x.id === state.selectedId);
+    if (!q) {
+      detail.innerHTML = '<p class="detail-empty">左の一覧から質問を選択してください</p>';
+      $("detail-pane").classList.remove("mobile-show");
+      return;
+    }
+    detail.innerHTML = `
+      <div class="question-head">
+        <span class="muted small">${AnonQA.formatJst(q.createdAt)}</span>
+        ${statusBadge(q)}
+        <span class="muted small">👍 ${q.votes}</span>
+      </div>
+      <p class="question-body">${AnonQA.linkify(q.body)}</p>
+      ${q.imageKey ? `<a href="${imageUrl(q.imageKey)}" target="_blank" rel="noopener"><img class="question-image" src="${imageUrl(q.imageKey)}" alt="添付画像" loading="lazy"></a>` : ""}
+      ${q.answers.length ? `<div class="answers">${q.answers.map(answerHtml).join("")}</div>` : ""}
+      <div class="field" style="margin-top: 12px;">
+        <textarea class="textarea answer-input" rows="3"
+          placeholder="回答を入力(画像の貼り付け・添付も可能)。送信すると自動で回答済みになります">${esc(state.answerDraft)}</textarea>
+        ${state.answerPendingImage ? `
+          <div class="image-preview">
+            <img src="${state.answerPendingImage.previewUrl}" alt="添付画像プレビュー">
+            <button type="button" class="btn btn-ghost btn-small" data-action="answer-image-remove">添付を取り消す</button>
           </div>` : ""}
-        <div class="admin-item-actions">
-          ${state.answeringId !== q.id ? '<button class="btn btn-small btn-primary" data-action="answer">回答する</button>' : ""}
-          <button class="btn btn-small btn-ghost" data-action="toggle-answered">${q.isAnswered ? "未回答に戻す" : "回答済みにする"}</button>
-          <button class="btn btn-small btn-ghost btn-danger-text" data-action="delete">削除</button>
+        <div class="form-row">
+          <label class="btn btn-ghost btn-small file-label">
+            画像を添付
+            <input type="file" class="answer-image-input" accept="image/png,image/jpeg,image/gif,image/webp">
+          </label>
+          <div class="admin-item-actions">
+            <button class="btn btn-primary btn-small" data-action="submit-answer">回答する</button>
+            <button class="btn btn-small btn-ghost" data-action="toggle-answered">${q.isAnswered ? "未回答に戻す" : "回答済みにする"}</button>
+            <button class="btn btn-small btn-ghost btn-danger-text" data-action="delete">質問を削除</button>
+          </div>
         </div>
-      </article>`).join("");
-    $("question-empty").hidden = state.questions.length > 0;
+      </div>`;
+    if (hadFocus) {
+      const input = detail.querySelector(".answer-input");
+      input.focus();
+      input.setSelectionRange(selStart, selEnd);
+    }
+  }
+
+  function selectQuestion(id) {
+    if (state.selectedId !== id) {
+      state.selectedId = id;
+      state.answerDraft = "";
+      clearAnswerPendingImage();
+    }
+    renderQuestions();
+    renderDetail();
+    // 狭幅(1 カラム)では選択時に詳細を表示してスクロールする
+    $("detail-pane").classList.add("mobile-show");
+    if (window.innerWidth < 768) {
+      $("detail-pane").scrollIntoView({ behavior: "smooth" });
+    }
   }
 
   function imageUrl(imageKey) {
     return `/api/s/${encodeURIComponent(state.session.code)}/images/${encodeURIComponent(imageKey)}`;
   }
 
-  $("question-list").addEventListener("click", async (ev) => {
+  // 左一覧: クリック(または Enter/Space)で右ペインに表示。選択モード中はチェックのみ
+  $("question-list").addEventListener("click", (ev) => {
+    const item = ev.target.closest(".qitem");
+    if (!item) return;
+    const checkbox = ev.target.closest('[data-role="bulk-item"]');
+    if (checkbox) {
+      if (checkbox.checked) state.checkedIds.add(item.dataset.id);
+      else state.checkedIds.delete(item.dataset.id);
+      renderBulkbar();
+      return;
+    }
+    selectQuestion(item.dataset.id);
+  });
+
+  $("question-list").addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    const item = ev.target.closest(".qitem");
+    if (!item || ev.target.closest("input")) return;
+    ev.preventDefault();
+    selectQuestion(item.dataset.id);
+  });
+
+  // 右ペインの操作(回答 / 未回答戻し / 削除 / 返信削除)。既存 API をそのまま使う
+  $("question-detail").addEventListener("click", async (ev) => {
     const btn = ev.target.closest("[data-action]");
     if (!btn) return;
-    const card = btn.closest(".question-card");
-    const q = state.questions.find((x) => x.id === card.dataset.id);
+    const q = state.questions.find((x) => x.id === state.selectedId);
     if (!q) return;
     const action = btn.dataset.action;
     try {
-      if (action === "answer") {
-        state.answeringId = q.id;
-        clearAnswerPendingImage();
-        renderQuestions();
-        const input = document.querySelector(`[data-id="${CSS.escape(q.id)}"] .answer-input`);
-        if (input) input.focus();
-      }
-      if (action === "cancel-answer") {
-        state.answeringId = null;
-        clearAnswerPendingImage();
-        renderQuestions();
-      }
       if (action === "answer-image-remove") {
         clearAnswerPendingImage();
-        renderQuestions();
+        renderDetail();
       }
       if (action === "submit-answer") {
-        const body = card.querySelector(".answer-input").value.trim();
+        const body = $("question-detail").querySelector(".answer-input").value.trim();
         const pending = state.answerPendingImage;
         if (!body && !pending) return;
         let imageKey;
@@ -265,24 +464,31 @@
           method: "POST",
           body: JSON.stringify({ body, imageKey }),
         });
-        Object.assign(q, data.question);
-        state.answeringId = null;
+        applyQuestionUpdate(q, data.question);
+        state.answerDraft = "";
         clearAnswerPendingImage();
+        renderCounts();
         renderQuestions();
+        renderDetail();
       }
       if (action === "toggle-answered") {
         const data = await AdminQA.api(`/sessions/${sessionId}/questions/${q.id}/answered`, {
           method: "PATCH",
           body: JSON.stringify({ isAnswered: !q.isAnswered }),
         });
-        Object.assign(q, data.question);
+        applyQuestionUpdate(q, data.question);
+        renderCounts();
         renderQuestions();
+        renderDetail();
       }
       if (action === "delete") {
         if (!confirm("この質問を削除しますか?")) return;
         await AdminQA.api(`/sessions/${sessionId}/questions/${q.id}`, { method: "DELETE" });
-        state.questions = state.questions.filter((x) => x.id !== q.id);
+        removeQuestionLocal(q.id);
+        renderCounts();
+        renderBulkbar();
         renderQuestions();
+        renderDetail();
       }
       if (action === "delete-answer") {
         if (!confirm("この返信を削除しますか?")) return;
@@ -290,8 +496,9 @@
         const data = await AdminQA.api(`/sessions/${sessionId}/questions/${q.id}/answers/${answerId}`, {
           method: "DELETE",
         });
-        Object.assign(q, data.question);
+        applyQuestionUpdate(q, data.question);
         renderQuestions();
+        renderDetail();
       }
     } catch (e) {
       alert(e.message);
@@ -314,7 +521,7 @@
     }
     clearAnswerPendingImage();
     state.answerPendingImage = { file, previewUrl: URL.createObjectURL(file) };
-    renderQuestions();
+    renderDetail();
   }
 
   function clearAnswerPendingImage() {
@@ -322,14 +529,14 @@
     state.answerPendingImage = null;
   }
 
-  $("question-list").addEventListener("change", (ev) => {
+  $("question-detail").addEventListener("change", (ev) => {
     const input = ev.target.closest(".answer-image-input");
     if (!input || !input.files || !input.files[0]) return;
     setAnswerPendingImage(input.files[0]);
     input.value = "";
   });
 
-  $("question-list").addEventListener("paste", (ev) => {
+  $("question-detail").addEventListener("paste", (ev) => {
     if (!ev.target.closest(".answer-input")) return;
     const items = ev.clipboardData && ev.clipboardData.items;
     if (!items) return;
@@ -340,6 +547,86 @@
         return;
       }
     }
+  });
+
+  // ---------- 一括モデレーション ----------
+  function renderBulkbar() {
+    $("bulkbar").hidden = !state.bulkMode;
+    $("bulk-toggle-btn").textContent = state.bulkMode ? "選択を解除" : "選択";
+    $("bulk-count").textContent = String(state.checkedIds.size);
+    const total = visibleQuestions().length;
+    $("bulk-select-all").checked = total > 0 && state.checkedIds.size >= total;
+    // チェック数が変わったら確認 UI はいったん引っ込める(誤操作防止)
+    $("bulk-confirm").hidden = true;
+    $("bulk-delete-btn").disabled = state.checkedIds.size === 0 || state.bulkDeleting;
+  }
+
+  $("bulk-toggle-btn").addEventListener("click", () => {
+    state.bulkMode = !state.bulkMode;
+    state.checkedIds.clear();
+    renderBulkbar();
+    renderQuestions();
+  });
+
+  $("bulk-cancel-btn").addEventListener("click", () => {
+    state.bulkMode = false;
+    state.checkedIds.clear();
+    renderBulkbar();
+    renderQuestions();
+  });
+
+  $("bulk-select-all").addEventListener("change", () => {
+    if ($("bulk-select-all").checked) {
+      for (const q of visibleQuestions()) state.checkedIds.add(q.id);
+    } else {
+      state.checkedIds.clear();
+    }
+    renderBulkbar();
+    renderQuestions();
+  });
+
+  // 破壊的操作のため画面内の確認 UI を挟む(CSP 方針によりブラウザモーダルは使わない)
+  $("bulk-delete-btn").addEventListener("click", () => {
+    if (state.checkedIds.size === 0) return;
+    $("bulk-confirm-label").textContent = `${state.checkedIds.size} 件の質問を削除します。よろしいですか?`;
+    $("bulk-confirm").hidden = false;
+  });
+
+  $("bulk-delete-cancel-btn").addEventListener("click", () => {
+    $("bulk-confirm").hidden = true;
+  });
+
+  // 既存の単一 DELETE(画像後始末 + broadcast 込み)を 1 件ずつ確実に呼ぶ。
+  // まとめ削除専用の API は作らない
+  $("bulk-delete-confirm-btn").addEventListener("click", async () => {
+    if (state.bulkDeleting) return;
+    state.bulkDeleting = true;
+    $("bulk-confirm").hidden = true;
+    $("bulk-delete-btn").disabled = true;
+    const targets = [...state.checkedIds];
+    const failed = [];
+    for (const id of targets) {
+      try {
+        await AdminQA.api(`/sessions/${sessionId}/questions/${id}`, { method: "DELETE" });
+        removeQuestionLocal(id);
+        renderCounts();
+        renderQuestions();
+      } catch (e) {
+        failed.push(id);
+      }
+    }
+    state.bulkDeleting = false;
+    if (failed.length > 0) {
+      // 失敗分はチェックを残し、残件が分かるようにする
+      state.checkedIds = new Set(failed);
+      alert(`${failed.length} 件の削除に失敗しました。チェックが残っている質問を確認してください`);
+    } else {
+      state.bulkMode = false;
+      state.checkedIds.clear();
+    }
+    renderBulkbar();
+    renderQuestions();
+    renderDetail();
   });
 
   // ---------- 参考情報 ----------

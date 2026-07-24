@@ -232,6 +232,7 @@ label { font-size: 0.9rem; }
 }
 
 .badge-answered { background: #dcfce7; color: var(--ok); }
+.badge-open { background: #fef3c7; color: #92400e; }
 .badge-mine { background: var(--accent-weak); color: var(--accent-strong); }
 .badge-status-active { background: var(--accent-weak); color: var(--accent-strong); }
 .badge-status-ended { background: #e5e7eb; color: var(--text-muted); }
