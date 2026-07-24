@@ -94,34 +94,84 @@ export interface QuestionsPage {
   nextCursor: string | null;
 }
 
+/** 講師画面のトリアージ・検索・並べ替え用オプション(省略時は従来どおりの挙動) */
+export interface QuestionListOptions {
+  /** open=未回答 / done=回答済み / all=すべて(既定) */
+  status?: "open" | "done" | "all";
+  /**
+   * 並び順。既定は new(created_at + id の keyset を維持し、既存クライアントと互換)。
+   * UI 側の既定選択は votes だが、サーバ既定を votes にすると既存の
+   * カーソルページネーション前提の呼び出しが壊れるため new のままとする。
+   */
+  sort?: "votes" | "new" | "old";
+  /** 本文の部分一致キーワード。session_id スコープ内でのみ検索する */
+  q?: string;
+}
+
+/** 一括モード(sort=votes / 検索時)の取得上限。per-session の想定件数(数十〜数百)を十分カバーする */
+export const QUESTIONS_BULK_LIMIT = 500;
+
+/** LIKE の % _ \ をエスケープし、検索語をリテラルとして部分一致させる */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
 /**
  * セッションの質問一覧(created_at + id の keyset カーソルページネーション)。
  * created_at 同値の取りこぼし・重複を避けるため id を tiebreak に使う。
  * tokenHash は本人判定(isMine)用で、レスポンスに含めてはならない
  * (admin にも返さない — ハッシュでも投稿者の紐付けが可能になるため)。
+ *
+ * ページネーション方式(テストでも明示):
+ * - sort=new / old(検索なし): 従来どおり keyset カーソル(50 件ずつ)。
+ * - sort=votes または検索(q)指定時: vote_count が可変で厳密な keyset カーソル化が
+ *   できないため、カーソルを使わず上限 QUESTIONS_BULK_LIMIT 件の一括取得とし
+ *   nextCursor は常に null を返す(per-session 件数が小さい前提。FTS5 は将来課題)。
  */
 export async function listQuestions(
   env: Env,
   sessionId: string,
   myHash: string | null = null,
   cursor: QuestionsCursor | null = null,
+  options: QuestionListOptions = {},
 ): Promise<QuestionsPage> {
+  const status = options.status ?? "all";
+  const sort = options.sort ?? "new";
+  const search = options.q?.trim() ?? "";
+  const bulk = sort === "votes" || search !== "";
+
   let sql = `SELECT q.*, (SELECT COUNT(*) FROM votes v WHERE v.question_id = q.id) AS vote_count
      FROM questions q WHERE q.session_id = ?`;
   const binds: (string | number)[] = [sessionId];
-  if (cursor) {
-    sql += " AND (q.created_at < ? OR (q.created_at = ? AND q.id < ?))";
+  if (status === "open") sql += " AND q.is_answered = 0";
+  if (status === "done") sql += " AND q.is_answered = 1";
+  if (search !== "") {
+    // 先頭ワイルドカードのため index は効かないが、session_id で絞られる前提で LIKE で十分
+    sql += " AND q.body LIKE ? ESCAPE '\\'";
+    binds.push(`%${escapeLike(search)}%`);
+  }
+  if (!bulk && cursor) {
+    sql +=
+      sort === "old"
+        ? " AND (q.created_at > ? OR (q.created_at = ? AND q.id > ?))"
+        : " AND (q.created_at < ? OR (q.created_at = ? AND q.id < ?))";
     binds.push(cursor.createdAt, cursor.createdAt, cursor.id);
   }
-  // 次ページの有無を判定するため 1 件多く取得する
-  sql += " ORDER BY q.created_at DESC, q.id DESC LIMIT ?";
-  binds.push(QUESTIONS_PAGE_SIZE + 1);
+  if (sort === "votes") {
+    sql += " ORDER BY vote_count DESC, q.created_at DESC, q.id DESC LIMIT ?";
+  } else if (sort === "old") {
+    sql += " ORDER BY q.created_at ASC, q.id ASC LIMIT ?";
+  } else {
+    sql += " ORDER BY q.created_at DESC, q.id DESC LIMIT ?";
+  }
+  // keyset 時は次ページの有無を判定するため 1 件多く取得する
+  binds.push(bulk ? QUESTIONS_BULK_LIMIT : QUESTIONS_PAGE_SIZE + 1);
   const questions = await env.DB.prepare(sql)
     .bind(...binds)
     .all<QuestionRow & { vote_count: number }>();
 
-  const hasMore = questions.results.length > QUESTIONS_PAGE_SIZE;
-  const page = questions.results.slice(0, QUESTIONS_PAGE_SIZE);
+  const hasMore = !bulk && questions.results.length > QUESTIONS_PAGE_SIZE;
+  const page = bulk ? questions.results : questions.results.slice(0, QUESTIONS_PAGE_SIZE);
 
   // answers はページ内の質問のぶんだけロードする(全件ロードしない)
   const answersByQuestion = new Map<string, PublicAnswer[]>();
@@ -146,6 +196,30 @@ export async function listQuestions(
       tokenHash: q.token_hash,
     })),
     nextCursor: hasMore ? `${last.created_at}_${last.id}` : null,
+  };
+}
+
+export interface QuestionCounts {
+  open: number;
+  done: number;
+  total: number;
+}
+
+/** トリアージタブの件数バッジ用。未回答/回答済み/総数を 1 クエリで集計する */
+export async function countQuestionsByStatus(env: Env, sessionId: string): Promise<QuestionCounts> {
+  const row = await env.DB.prepare(
+    `SELECT
+       SUM(CASE WHEN is_answered = 0 THEN 1 ELSE 0 END) AS open_count,
+       SUM(CASE WHEN is_answered = 1 THEN 1 ELSE 0 END) AS done_count,
+       COUNT(*) AS total_count
+     FROM questions WHERE session_id = ?`,
+  )
+    .bind(sessionId)
+    .first<{ open_count: number | null; done_count: number | null; total_count: number }>();
+  return {
+    open: row?.open_count ?? 0,
+    done: row?.done_count ?? 0,
+    total: row?.total_count ?? 0,
   };
 }
 

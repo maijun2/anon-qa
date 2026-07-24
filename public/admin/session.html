@@ -35,19 +35,60 @@
 
   <main class="container container-wide" style="padding-bottom: 48px;">
     <section id="tab-questions" class="tab-panel">
-      <div class="list-header">
-        <h2>質問一覧</h2>
-        <div class="sort-toggle" role="group" aria-label="並び順">
-          <button class="btn btn-ghost btn-small sort-btn active" data-sort="new">新着順</button>
-          <button class="btn btn-ghost btn-small sort-btn" data-sort="votes">いいね順</button>
+      <!-- トリアージ(status)・検索・並べ替え。絞り込みはサーバサイドで行う -->
+      <div class="admin-toolbar">
+        <div class="seg" role="group" aria-label="回答状況で絞り込み">
+          <button type="button" class="seg-btn active" data-status="open">未回答 <span class="seg-count" id="count-open">0</span></button>
+          <button type="button" class="seg-btn" data-status="done">回答済み <span class="seg-count" id="count-done">0</span></button>
+          <button type="button" class="seg-btn" data-status="all">すべて <span class="seg-count" id="count-all">0</span></button>
+        </div>
+        <div class="search-box">
+          <label for="question-search" class="sr-only">質問を検索</label>
+          <input type="search" id="question-search" class="input" placeholder="質問を検索(キーワード)" autocomplete="off">
+        </div>
+        <label for="question-sort" class="sr-only">並び順</label>
+        <select id="question-sort" class="select sort-select">
+          <option value="votes" selected>いいね順(多い順)</option>
+          <option value="new">新着順</option>
+          <option value="old">古い順</option>
+        </select>
+        <button type="button" id="bulk-toggle-btn" class="btn btn-ghost">選択</button>
+      </div>
+
+      <!-- 一括モデレーション(選択モード時のみ表示)。確認は画面内 UI で行う -->
+      <div class="bulkbar" id="bulkbar" hidden>
+        <label><input type="checkbox" id="bulk-select-all" class="bulk-check"> すべて選択</label>
+        <span class="muted"><b id="bulk-count">0</b> 件選択中</span>
+        <button type="button" id="bulk-delete-btn" class="btn btn-small btn-ghost btn-danger-text">選択したものを一括削除</button>
+        <span id="bulk-confirm" hidden>
+          <span class="bulk-confirm" id="bulk-confirm-label"></span>
+          <button type="button" id="bulk-delete-confirm-btn" class="btn btn-small btn-danger">削除を実行</button>
+          <button type="button" id="bulk-delete-cancel-btn" class="btn btn-small btn-ghost">やめる</button>
+        </span>
+        <button type="button" id="bulk-cancel-btn" class="btn btn-small btn-ghost">キャンセル</button>
+      </div>
+
+      <!-- 新着ピル: 新規質問はここに溜め、クリックするまで一覧を動かさない -->
+      <div class="new-pill" aria-live="polite">
+        <button type="button" id="new-question-pill" hidden>↑ 新しい未回答が <span id="new-question-count">0</span> 件</button>
+      </div>
+
+      <!-- 2 ペイン: 左=一覧(密) / 右=詳細 + 回答入力。見出しを対で置き上端を揃える -->
+      <div class="two-pane">
+        <div class="pane">
+          <h2 class="pane-heading" id="list-heading">未回答(いいね順)</h2>
+          <div id="question-list" class="qlist"></div>
+          <p id="question-empty" class="muted" hidden>該当する質問はありません。</p>
+
+          <!-- 無限スクロール用の番兵。画面に入ると次の 50 件を追加取得する -->
+          <div id="question-sentinel" aria-hidden="true"></div>
+          <p id="question-loading" class="muted small" hidden>読み込み中…</p>
+        </div>
+        <div class="pane pane-detail" id="detail-pane">
+          <h2 class="pane-heading">選択中の質問</h2>
+          <div id="question-detail" class="card detail-card"></div>
         </div>
       </div>
-      <div id="question-list" class="stack"></div>
-      <p id="question-empty" class="muted" hidden>質問はまだありません。</p>
-
-      <!-- 無限スクロール用の番兵。画面に入ると次の 50 件を追加取得する -->
-      <div id="question-sentinel" aria-hidden="true"></div>
-      <p id="question-loading" class="muted small" hidden>読み込み中…</p>
     </section>
 
     <section id="tab-materials" class="tab-panel" hidden>

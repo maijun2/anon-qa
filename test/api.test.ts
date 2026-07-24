@@ -374,7 +374,8 @@ describe("admin 認証", () => {
     expect((await call("check")).allowed).toBe(true);
   });
 
-  it("攻撃 IP からの失敗連打中でも、別 IP の正規パスワードログインは成功する", async () => {
+  // 31 回の逐次 fetch が既定 5s を超えることがあるため明示 timeout(flaky 対策、意図は不変)
+  it("攻撃 IP からの失敗連打中でも、別 IP の正規パスワードログインは成功する", { timeout: 20_000 }, async () => {
     // 単一 IP の連打は IP 別サブバケット(5 失敗/60s)で先に止まり、
     // グローバル枠(全 IP 合算 20 失敗/60s)を消費しない構造の検証
     const attackerHeaders = { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.66" };
