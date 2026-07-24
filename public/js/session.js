@@ -187,6 +187,7 @@
         state.questions = state.questions.filter((q) => q.id !== p.questionId);
         state.pendingNew = state.pendingNew.filter((q) => q.id !== p.questionId);
         state.unreadIds.delete(p.questionId);
+        updateBellUnread();
         updateNewPill();
         renderQuestions();
         break;
@@ -265,6 +266,13 @@
       state.unreadIds.add(q.id);
     }
     state.seenInstructorAnswers.set(q.id, count);
+    updateBellUnread();
+  }
+
+  // 未読が 1 件以上あるあいだ、ヘッダのベル(通知音トグル)に赤ドットを重畳する。
+  // 通知音の ON/OFF 機能(initSoundToggle)には手を入れず、クラスの付け外しのみ行う
+  function updateBellUnread() {
+    $("sound-toggle").classList.toggle("has-unread", state.unreadIds.size > 0);
   }
 
   function updateNewPill() {
@@ -430,6 +438,7 @@
       if (cardEl && state.unreadIds.delete(cardEl.dataset.id)) {
         const note = cardEl.querySelector(".unread-note");
         if (note) note.remove();
+        updateBellUnread();
       }
     });
 

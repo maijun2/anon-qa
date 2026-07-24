@@ -109,7 +109,21 @@ a { color: var(--accent); }
 .app-header-actions { display: flex; align-items: center; gap: 8px; }
 
 /* 通知音トグル(絵文字ボタン) */
-.sound-toggle { min-width: 44px; font-size: 1.1rem; line-height: 1; padding: 8px 10px; }
+.sound-toggle { min-width: 44px; font-size: 1.1rem; line-height: 1; padding: 8px 10px; position: relative; }
+
+/* 未読(自分のスレッドへの新しい回答)が 1 件以上あるときベルに赤ドットを重畳する。
+   状態はカード側の「新しい回答」ラベルでも表現(色のみに依存しない) */
+.sound-toggle.has-unread::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 7px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--danger);
+  border: 2px solid var(--bg);
+}
 
 .conn-status {
   background: #fef3c7;
