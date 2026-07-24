@@ -190,16 +190,30 @@
     const p = msg.payload || {};
     switch (msg.type) {
       case "question:new": {
+        // 新規質問はバッファしてピルで通知し、閲覧位置を勝手に動かさない。
+        // 件数バッジはサーバの実数に合わせて受信時点で更新する
         if (state.questions.some((q) => q.id === p.question.id)) break;
-        state.questions.unshift(p.question);
         state.counts.open += 1;
         state.counts.total += 1;
         renderCounts();
-        renderQuestions();
-        AnonQA.playNotify();
+        if (!state.pendingNew.some((q) => q.id === p.question.id)) {
+          state.pendingNew.push(p.question);
+          updateNewPill();
+          AnonQA.playNotify();
+        }
         break;
       }
       case "question:updated": {
+        const buffered = state.pendingNew.find((x) => x.id === p.question.id);
+        if (buffered) {
+          if (buffered.isAnswered !== p.question.isAnswered) {
+            state.counts.open += p.question.isAnswered ? -1 : 1;
+            state.counts.done += p.question.isAnswered ? 1 : -1;
+            renderCounts();
+          }
+          Object.assign(buffered, p.question);
+          break;
+        }
         const existing = state.questions.find((q) => q.id === p.question.id);
         if (existing) applyQuestionUpdate(existing, p.question);
         else state.questions.unshift(p.question);
@@ -208,14 +222,29 @@
         renderDetail();
         break;
       }
-      case "question:deleted":
+      case "question:deleted": {
+        const buffered = state.pendingNew.find((x) => x.id === p.questionId);
+        if (buffered) {
+          state.pendingNew = state.pendingNew.filter((x) => x.id !== p.questionId);
+          state.counts.total -= 1;
+          state.counts[buffered.isAnswered ? "done" : "open"] -= 1;
+          renderCounts();
+          updateNewPill();
+          break;
+        }
         removeQuestionLocal(p.questionId);
         renderCounts();
         renderBulkbar();
         renderQuestions();
         renderDetail();
         break;
+      }
       case "vote:changed": {
+        const buffered = state.pendingNew.find((x) => x.id === p.questionId);
+        if (buffered) {
+          buffered.votes = p.votes;
+          break;
+        }
         const q = state.questions.find((x) => x.id === p.questionId);
         if (q) {
           q.votes = p.votes;
@@ -332,6 +361,28 @@
     $("question-empty").hidden = items.length > 0;
     state.flashIds.clear();
   }
+
+  // ---------- 新着ピル ----------
+  function updateNewPill() {
+    const n = state.pendingNew.length;
+    $("new-question-pill").hidden = n === 0;
+    $("new-question-count").textContent = String(n);
+  }
+
+  // ピルのクリックで初めて一覧へ反映する(反映分は一瞬ハイライト)。
+  // 挿入位置は visibleQuestions() の再フィルタ・再ソートで現在の表示条件に整合する
+  function applyPendingNew() {
+    const items = state.pendingNew.splice(0);
+    for (const q of items) {
+      if (state.questions.some((x) => x.id === q.id)) continue;
+      state.questions.unshift(q);
+      state.flashIds.add(q.id);
+    }
+    updateNewPill();
+    renderQuestions();
+  }
+
+  $("new-question-pill").addEventListener("click", applyPendingNew);
 
   function answerHtml(a) {
     const isInstructor = a.authorRole === "instructor";
