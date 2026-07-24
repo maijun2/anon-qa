@@ -32,6 +32,15 @@
     // カーソルページネーション(50 件ずつ)。null は最終ページ到達済み
     nextCursor: null,
     loadingMore: false,
+    // 新着ピル: 他の参加者の新規質問はここに溜め、クリックで初めて一覧へ反映する
+    // (閲覧位置のスクロール暴れを防ぐ。自分の投稿は従来どおり即時反映)
+    pendingNew: [],
+    // ピル反映直後に一瞬ハイライトする質問 ID
+    flashIds: new Set(),
+    // 未読管理(メモリ内のみ。匿名性維持のためサーバ保存や localStorage は使わない):
+    // 質問 ID → 確認済みの講師回答数。増加を検知したら unreadIds に積む
+    seenInstructorAnswers: new Map(),
+    unreadIds: new Set(),
   };
 
   // ---------- タブ ----------
@@ -94,6 +103,8 @@
     state.nextCursor = data.nextCursor || null;
     for (const q of state.questions) {
       for (const a of q.answers) if (a.isMine) state.myAnswerIds.add(a.id);
+      // 初期ロード分は既読扱い(以降の増加のみ未読にする)
+      state.seenInstructorAnswers.set(q.id, instructorAnswerCount(q));
     }
     renderQuestions();
   }
@@ -111,6 +122,7 @@
         if (state.questions.some((x) => x.id === q.id)) continue;
         state.questions.push(q);
         for (const a of q.answers) if (a.isMine) state.myAnswerIds.add(a.id);
+        state.seenInstructorAnswers.set(q.id, instructorAnswerCount(q));
       }
       renderQuestions();
       // 追加後も番兵が画面内に残っている(リストが短い)場合は続けて取得する
@@ -146,21 +158,41 @@
     const p = msg.payload || {};
     switch (msg.type) {
       case "question:new": {
-        const isNew = !state.questions.some((x) => x.id === p.question.id);
-        upsertQuestion(p.question);
-        renderQuestions();
-        if (isNew) AnonQA.playNotify();
+        // 自分の投稿(楽観反映済みで一覧に存在)は即時更新。
+        // 他の参加者の新規質問はバッファしてピルで通知し、閲覧位置を動かさない
+        if (state.questions.some((x) => x.id === p.question.id)) {
+          upsertQuestion(p.question);
+          renderQuestions();
+          break;
+        }
+        if (!state.pendingNew.some((x) => x.id === p.question.id)) {
+          state.pendingNew.push(p.question);
+          updateNewPill();
+          AnonQA.playNotify();
+        }
         break;
       }
-      case "question:updated":
+      case "question:updated": {
+        const buffered = state.pendingNew.find((x) => x.id === p.question.id);
+        if (buffered) {
+          Object.assign(buffered, p.question);
+          break;
+        }
         upsertQuestion(p.question);
+        trackUnread(p.question.id);
         renderQuestions();
         break;
+      }
       case "question:deleted":
         state.questions = state.questions.filter((q) => q.id !== p.questionId);
+        state.pendingNew = state.pendingNew.filter((q) => q.id !== p.questionId);
+        state.unreadIds.delete(p.questionId);
+        updateNewPill();
         renderQuestions();
         break;
       case "vote:changed": {
+        const buffered = state.pendingNew.find((x) => x.id === p.questionId);
+        if (buffered) { buffered.votes = p.votes; break; }
         const q = state.questions.find((x) => x.id === p.questionId);
         if (q) { q.votes = p.votes; renderQuestions(); }
         break;
@@ -213,6 +245,50 @@
     }
   }
 
+  // ---------- 新着ピル / 未読 ----------
+  function instructorAnswerCount(q) {
+    return (q.answers || []).filter((a) => a.authorRole === "instructor").length;
+  }
+
+  // 自分が投稿 or 返信したスレッドか(未読ドットの対象)
+  function isMyThread(q) {
+    return q.isMine || (q.answers || []).some((a) => a.isMine || state.myAnswerIds.has(a.id));
+  }
+
+  // 講師回答数の増加を検知して未読にする。初見の質問は既読扱いで基準値のみ記録
+  function trackUnread(questionId) {
+    const q = state.questions.find((x) => x.id === questionId);
+    if (!q) return;
+    const count = instructorAnswerCount(q);
+    const seen = state.seenInstructorAnswers.get(q.id);
+    if (seen !== undefined && count > seen && isMyThread(q)) {
+      state.unreadIds.add(q.id);
+    }
+    state.seenInstructorAnswers.set(q.id, count);
+  }
+
+  function updateNewPill() {
+    const n = state.pendingNew.length;
+    $("new-question-pill").hidden = n === 0;
+    $("new-question-count").textContent = String(n);
+  }
+
+  // ピルのクリックで初めてバッファ分を一覧へ反映する(反映分は一瞬ハイライト)
+  function applyPendingNew() {
+    const items = state.pendingNew.splice(0);
+    for (const q of items) {
+      if (state.questions.some((x) => x.id === q.id)) continue;
+      upsertQuestion(q);
+      state.seenInstructorAnswers.set(q.id, instructorAnswerCount(q));
+      state.flashIds.add(q.id);
+    }
+    updateNewPill();
+    renderQuestions();
+    state.flashIds.clear();
+  }
+
+  $("new-question-pill").addEventListener("click", applyPendingNew);
+
   function upsertSurvey(survey) {
     if (!survey) return;
     const existing = state.surveys.find((s) => s.id === survey.id);
@@ -246,6 +322,8 @@
     const classes = ["card", "question-card"];
     if (q.isAnswered) classes.push("answered");
     if (q.pending) classes.push("pending");
+    if (q.isMine) classes.push("mine");
+    if (state.flashIds.has(q.id)) classes.push("flash");
     const editable = q.isMine && !state.ended && !q.pending;
     const isEditing = state.editingId === q.id;
     const bodyHtml = isEditing
@@ -262,7 +340,8 @@
         <div class="question-head">
           <span class="muted small">${AnonQA.formatJst(q.createdAt)}${q.updatedAt > q.createdAt ? "(編集済み)" : ""}</span>
           ${q.isAnswered ? '<span class="badge badge-answered">回答済み</span>' : ""}
-          ${q.isMine ? '<span class="badge badge-mine">自分の質問</span>' : ""}
+          ${q.isMine ? '<span class="badge badge-mine">あなたの質問</span>' : ""}
+          ${state.unreadIds.has(q.id) ? '<span class="unread-note">新しい回答</span>' : ""}
           ${q.pending ? '<span class="muted small">送信中…</span>' : ""}
         </div>
         ${bodyHtml}
@@ -344,6 +423,16 @@
   }
 
   ["question-list", "answered-list"].forEach((listId) => {
+    // 未読ドットはカードのタップで既読化する。
+    // 全再描画すると同一クリック中の他ハンドラが detached DOM を掴むため、その場で除去する
+    $(listId).addEventListener("click", (ev) => {
+      const cardEl = ev.target.closest(".question-card");
+      if (cardEl && state.unreadIds.delete(cardEl.dataset.id)) {
+        const note = cardEl.querySelector(".unread-note");
+        if (note) note.remove();
+      }
+    });
+
     $(listId).addEventListener("click", (ev) => {
       const btn = ev.target.closest("[data-action]");
       if (!btn) return;
@@ -437,6 +526,7 @@
       state.replyingId = null;
       clearReplyPendingImage();
       upsertQuestion(res.question);
+      trackUnread(q.id);
     } catch (e) {
       alert(e.message);
     }
@@ -453,6 +543,7 @@
       });
       state.editingAnswerId = null;
       upsertQuestion(res.question);
+      trackUnread(q.id);
     } catch (e) {
       alert(e.message);
     }
@@ -464,6 +555,7 @@
     try {
       const res = await AnonQA.api(code, `/questions/${q.id}/answers/${answerId}`, { method: "DELETE" });
       upsertQuestion(res.question);
+      trackUnread(q.id);
     } catch (e) {
       alert(e.message);
     }
@@ -630,12 +722,16 @@
         body: JSON.stringify({ body: text, imageKey }),
       });
       state.questions = state.questions.filter((q) => q.id !== temp.id);
+      // WebSocket broadcast が API 応答より先に届いてバッファ済みの場合は取り除く(二重反映防止)
+      state.pendingNew = state.pendingNew.filter((q) => q.id !== res.question.id);
+      updateNewPill();
       const existing = state.questions.find((q) => q.id === res.question.id);
       if (existing) {
         Object.assign(existing, res.question);
       } else {
         state.questions.unshift(res.question);
       }
+      state.seenInstructorAnswers.set(res.question.id, instructorAnswerCount(res.question));
       if (restore.image) URL.revokeObjectURL(restore.image.previewUrl);
     } catch (e) {
       // 失敗時ロールバック: 一時カードを消して入力を復元

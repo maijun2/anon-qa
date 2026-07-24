@@ -53,6 +53,10 @@
           <button class="btn btn-ghost btn-small sort-btn" data-sort="votes">いいね順</button>
         </div>
       </div>
+      <!-- 新着ピル: 他の参加者の新規質問はここに溜め、クリックするまで一覧を動かさない -->
+      <div class="new-pill" aria-live="polite">
+        <button type="button" id="new-question-pill" hidden>↑ 新しい質問が <span id="new-question-count">0</span> 件</button>
+      </div>
       <div id="question-list" class="stack"></div>
       <p id="question-empty" class="muted" hidden>まだ質問はありません。最初の質問を投稿してみましょう。</p>
 
