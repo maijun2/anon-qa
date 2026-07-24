@@ -519,6 +519,10 @@
         });
         applyQuestionUpdate(q, data.question);
         state.answerDraft = "";
+        // renderDetail は冒頭で現在の textarea 値を answerDraft に退避するため、
+        // 送信済みテキストが残る DOM を先に空にしてからでないとクリアが打ち消される
+        const sent = $("question-detail").querySelector(".answer-input");
+        if (sent) sent.value = "";
         clearAnswerPendingImage();
         renderCounts();
         renderQuestions();
