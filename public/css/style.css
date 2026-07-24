@@ -3,6 +3,8 @@
   --accent: #2563eb;
   --accent-strong: #1e40af;
   --accent-weak: #dbeafe;
+  /* 「自分の質問」カード等の淡い強調枠(accent-weak より一段濃い) */
+  --accent-border: #b7cdf5;
   --bg: #ffffff;
   --bg-subtle: #f5f7fa;
   --text: #1f2937;
@@ -264,10 +266,74 @@ label { font-size: 0.9rem; }
   word-break: break-word;
 }
 
-/* 回答済み: グレーアウト + バッジ(色のみに依存しない) */
+/* 回答済み: 背景 + バッジで区別(色のみに依存しない)。
+   本文は主役のため回答済みでも濃色(--text)を維持し、WCAG AA 4.5:1 を確保する */
 .question-card.answered { background: var(--bg-subtle); }
-.question-card.answered .question-body { color: var(--text-muted); }
 .question-card.pending { opacity: 0.6; }
+
+/* 自分の質問: 淡い枠 + 白地寄りの背景で強調 */
+.question-card.mine { border-color: var(--accent-border); background: #fbfcff; }
+.question-card.mine.answered { background: var(--bg-subtle); }
+
+/* 未読(新しい回答)ドット: 色 + ラベルで表現 */
+.unread-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--danger);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.unread-note::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+/* 新着反映時のハイライト */
+.question-card.flash, .qitem.flash { animation: card-flash 1.6s ease; }
+
+@keyframes card-flash {
+  0% { background: var(--accent-weak); }
+  100% { background: var(--bg); }
+}
+
+/* 新着ピル通知: sticky でリスト上部に浮かせ、クリックするまで一覧を動かさない */
+.new-pill {
+  position: sticky;
+  top: 72px;
+  z-index: 20;
+  display: flex;
+  justify-content: center;
+  margin: 4px 0;
+  pointer-events: none;
+}
+
+.new-pill button {
+  pointer-events: auto;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 999px;
+  min-height: 36px;
+  padding: 6px 18px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
+  animation: pill-drop 0.25s ease;
+}
+
+.new-pill button:hover { background: var(--accent-strong); }
+
+@keyframes pill-drop {
+  from { transform: translateY(-8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
 
 .question-image {
   max-width: 100%;
@@ -452,6 +518,156 @@ th, td {
 
 .hidden { display: none !important; }
 
+/* ---------- 講師: トリアージ + 検索 + 2 ペイン ---------- */
+
+/* ツールバー(セグメントフィルタ / 検索 / ソート / 選択モード) */
+.admin-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+
+.seg {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: var(--bg);
+  min-height: 40px;
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.seg-btn.active { background: var(--accent); color: #fff; }
+
+.seg-count {
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 999px;
+  padding: 0 7px;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.seg-btn.active .seg-count { background: rgba(255, 255, 255, 0.25); }
+
+.search-box { flex: 1; min-width: 180px; }
+
+.sort-select { width: auto; min-height: 40px; padding: 6px 10px; font-size: 0.85rem; }
+
+/* 一括モデレーションバー */
+.bulkbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+}
+
+.bulkbar label { display: inline-flex; align-items: center; gap: 6px; }
+
+.bulk-check { width: 18px; height: 18px; accent-color: var(--accent); flex: 0 0 auto; margin-top: 4px; }
+
+/* 一括削除の画面内確認(window.confirm はブラウザモーダルのため使わない) */
+.bulk-confirm { color: var(--danger); font-weight: 600; }
+
+/* 2 ペイン(左=一覧 / 右=詳細)。狭幅では 1 カラム + 選択時のみ詳細表示 */
+.two-pane { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
+
+.pane { min-width: 0; }
+
+/* 左右対の見出し: 同一スタイル・同一マージンでコンテンツ白枠の上端を揃える */
+.pane-heading {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.pane-detail { display: none; }
+.pane-detail.mobile-show { display: block; }
+
+/* 左ペイン: 密な質問リスト */
+.qlist { display: flex; flex-direction: column; gap: 8px; }
+
+.qitem {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+
+.qitem:hover { border-color: var(--accent-border); }
+.qitem.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-weak); }
+
+.votecol {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  padding: 4px 6px;
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+}
+
+/* いいねが集まっている質問は視覚的に目立たせる(色 + 数値) */
+.votecol.hot { background: #fff7ed; border-color: #fed7aa; }
+.votecol .votecol-n { font-size: 1.05rem; font-weight: 800; line-height: 1.2; }
+.votecol .votecol-l { font-size: 0.65rem; color: var(--text-muted); }
+
+.qmain { flex: 1; min-width: 0; }
+
+.qmeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.qtext {
+  font-size: 0.9rem;
+  color: var(--text);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+
+/* 右ペイン: 詳細 + 回答入力。sticky でスクロール往復を減らす */
+.detail-card { padding: 16px; }
+
+.detail-empty { color: var(--text-muted); text-align: center; padding: 32px 16px; }
+
 /* 投影モード: 大文字・高コントラスト */
 body.present {
   background: #ffffff;
@@ -502,4 +718,14 @@ body.present {
   .tabs { justify-content: flex-start; }
   .tab { flex: 0 0 auto; min-width: 128px; }
   .present-columns { grid-template-columns: 3fr 2fr; }
+
+  /* 講師 2 ペイン: 左=一覧(密) / 右=詳細 + 回答入力 */
+  .two-pane { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); }
+  .pane-detail { display: block; }
+  .pane-detail .detail-card {
+    position: sticky;
+    top: 76px;
+    max-height: calc(100vh - 96px);
+    overflow: auto;
+  }
 }
