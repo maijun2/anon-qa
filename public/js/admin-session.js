@@ -292,10 +292,11 @@
   });
 
   // 検索はデバウンス(250ms)してサーバへ問い合わせる。
-  // IME 変換中(isComposing)は発火させず、確定後の input で検索する
+  // IME 変換中(isComposing)は発火させず、確定時は compositionend で検索する
+  // (Chromium は変換確定後に isComposing=false の input を発火しないため、
+  //  input だけに頼ると日本語検索が無反応になる)
   let searchTimer = null;
-  $("question-search").addEventListener("input", (ev) => {
-    if (ev.isComposing) return;
+  function scheduleSearch() {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       const value = $("question-search").value.trim();
@@ -303,7 +304,12 @@
       state.q = value;
       reloadQuestions();
     }, 250);
+  }
+  $("question-search").addEventListener("input", (ev) => {
+    if (ev.isComposing) return;
+    scheduleSearch();
   });
+  $("question-search").addEventListener("compositionend", scheduleSearch);
 
   function renderCounts() {
     $("count-open").textContent = String(state.counts.open);
