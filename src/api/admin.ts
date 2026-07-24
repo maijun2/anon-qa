@@ -1,5 +1,6 @@
 import { clearAdminCookie, issueAdminCookie, timingSafeEqualStr, verifyAdmin } from "../auth";
 import {
+  countQuestionsByStatus,
   getPublicQuestion,
   getPublicSurvey,
   getSessionByCode,
@@ -10,6 +11,7 @@ import {
   parseQuestionsCursor,
   publicMaterial,
   publicSession,
+  type QuestionListOptions,
 } from "../db";
 import { errorJson, json, readJson } from "../http";
 import { deleteImage, deleteQuestionImages, deleteSessionImages, uploadImage } from "../images";
@@ -22,6 +24,21 @@ const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 function generateCode(length = 6): string {
   const bytes = crypto.getRandomValues(new Uint8Array(length));
   return [...bytes].map((b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("");
+}
+
+/**
+ * 講師の質問一覧クエリ(status/sort/q)を解釈する。不正値は既定値に落とす。
+ * sort のサーバ既定は new(既存の keyset ページネーション互換のため。UI 既定の votes はフロントが明示指定する)
+ */
+function parseQuestionListOptions(url: URL): QuestionListOptions {
+  const status = url.searchParams.get("status");
+  const sort = url.searchParams.get("sort");
+  const q = url.searchParams.get("q")?.trim();
+  return {
+    status: status === "open" || status === "done" ? status : "all",
+    sort: sort === "votes" || sort === "old" ? sort : "new",
+    q: q || undefined,
+  };
 }
 
 /** /api/admin/... 講師用 API(login 以外はセッション Cookie 必須) */
@@ -105,11 +122,12 @@ async function handleSessions(request: Request, env: Env, rest: string[]): Promi
   if (!session) return errorJson("セッションが見つかりません", 404);
 
   if (rest.length === 1 && method === "GET") {
-    const page = await listQuestions(env, session.id);
+    const page = await listQuestions(env, session.id, null, null, parseQuestionListOptions(new URL(request.url)));
     return json({
       session: publicSession(session),
       questions: page.questions.map(({ tokenHash: _tokenHash, ...q }) => q),
       nextCursor: page.nextCursor,
+      counts: await countQuestionsByStatus(env, session.id),
       materials: await listMaterials(env, session.id),
       surveys: await listSurveys(env, session.id, true),
     });
@@ -134,13 +152,16 @@ async function handleSessions(request: Request, env: Env, rest: string[]): Promi
     return json({ session: publicSession(updated) });
   }
 
-  // 質問一覧の追加ページ取得(スクロール時)。カーソルは listQuestions と同形式
+  // 質問一覧の追加ページ取得(スクロール時)。カーソルは listQuestions と同形式。
+  // status/sort/q はトリアージ・検索・並べ替え用(sort=votes と検索時はカーソル非対応の一括取得)
   if (rest.length === 2 && rest[1] === "questions" && method === "GET") {
-    const cursor = parseQuestionsCursor(new URL(request.url).searchParams.get("cursor"));
-    const page = await listQuestions(env, session.id, null, cursor);
+    const url = new URL(request.url);
+    const cursor = parseQuestionsCursor(url.searchParams.get("cursor"));
+    const page = await listQuestions(env, session.id, null, cursor, parseQuestionListOptions(url));
     return json({
       questions: page.questions.map(({ tokenHash: _tokenHash, ...q }) => q),
       nextCursor: page.nextCursor,
+      counts: await countQuestionsByStatus(env, session.id),
     });
   }
 
