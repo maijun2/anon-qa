@@ -187,9 +187,11 @@ async function main(): Promise<void> {
   await page.waitForSelector(".question-card");
   await savePng("participant-questions.png", await page.screenshot());
 
-  // 3. 講師: セッション管理画面
+  // 3. 講師: セッション管理画面(2 ペイン。左一覧の先頭を選択して右ペインも写す)
   await page.goto(`${BASE_URL}/admin/s/${session.id}`);
-  await page.waitForSelector(".question-card");
+  await page.waitForSelector(".qitem");
+  await page.click(".qitem");
+  await page.waitForSelector("#question-detail .question-body");
   await savePng("admin-session.png", await page.screenshot());
 
   // 4. 講師: 投影モード(既定は未回答のみ表示のため、回答済みも含めて全件見せる)
