@@ -77,8 +77,9 @@ async function fetchList(sessionId: string, cookie: string, query: string): Prom
   });
   expect(res.status).toBe(200);
   const raw = await res.text();
-  // 匿名性回帰: 検索/フィルタ/ソートのいずれのレスポンスにも tokenHash を含めない
+  // 匿名性回帰: 検索/フィルタ/ソートのいずれのレスポンスにも token_hash / tokenHash を含めない
   expect(raw).not.toContain("tokenHash");
+  expect(raw).not.toContain("token_hash");
   return { data: JSON.parse(raw) as ListResponse, raw };
 }
 

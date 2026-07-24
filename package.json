@@ -8,7 +8,8 @@
     "deploy": "wrangler deploy",
     "lint": "tsc --noEmit",
     "test": "vitest run",
-    "capture-screenshots": "tsx scripts/capture-screenshots.ts"
+    "capture-screenshots": "tsx scripts/capture-screenshots.ts",
+    "e2e:ui": "tsx scripts/e2e-ui.ts"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.6",

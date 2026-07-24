@@ -8,7 +8,8 @@
   --bg: #ffffff;
   --bg-subtle: #f5f7fa;
   --text: #1f2937;
-  --text-muted: #6b7280;
+  /* メタ情報用。回答済み背景(#f5f7fa)上でも AA(4.5:1)に余裕を持たせた濃さ */
+  --text-muted: #5b6472;
   --border: #d9dee5;
   --danger: #dc2626;
   --ok: #15803d;
@@ -604,8 +605,10 @@ th, td {
 /* 一括削除の画面内確認(window.confirm はブラウザモーダルのため使わない) */
 .bulk-confirm { color: var(--danger); font-weight: 600; }
 
-/* 2 ペイン(左=一覧 / 右=詳細)。狭幅では 1 カラム + 選択時のみ詳細表示 */
-.two-pane { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
+/* 2 ペイン(左=一覧 / 右=詳細)。狭幅では 1 カラム + 選択時のみ詳細表示。
+   align-items は既定(stretch)のまま: 右ペインを行の高さまで伸ばさないと
+   detail-card の position: sticky に可動域がなく、スクロールで画面外へ流れてしまう */
+.two-pane { display: grid; grid-template-columns: 1fr; gap: 16px; }
 
 .pane { min-width: 0; }
 

@@ -291,9 +291,11 @@
     reloadQuestions();
   });
 
-  // 検索はデバウンス(250ms)してサーバへ問い合わせる
+  // 検索はデバウンス(250ms)してサーバへ問い合わせる。
+  // IME 変換中(isComposing)は発火させず、確定後の input で検索する
   let searchTimer = null;
-  $("question-search").addEventListener("input", () => {
+  $("question-search").addEventListener("input", (ev) => {
+    if (ev.isComposing) return;
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       const value = $("question-search").value.trim();
