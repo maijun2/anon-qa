@@ -1,4 +1,4 @@
-import { clearAdminCookie, issueAdminCookie, timingSafeEqualStr, verifyAdmin } from "../auth";
+import { clearAdminCookie, issueAdminCookie, timingSafeEqualStr, verifyAdmin, verifyPendingApiToken } from "../auth";
 import {
   countQuestionsByStatus,
   getPublicQuestion,
@@ -6,6 +6,7 @@ import {
   getSessionByCode,
   getSessionById,
   listMaterials,
+  listPendingQuestions,
   listQuestions,
   listSurveys,
   parseQuestionsCursor,
@@ -58,6 +59,23 @@ export async function handleAdminApi(request: Request, env: Env, rest: string[])
       return errorJson("パスワードが違います", 401);
     }
     return json({ ok: true }, 200, { "Set-Cookie": await issueAdminCookie(env) });
+  }
+
+  // 外部連携(KiroCrew 等)専用。admin Cookie とは独立した Bearer 認証のため verifyAdmin より前で処理する
+  if (rest[0] === "pending-questions" && method === "GET") {
+    if (!verifyPendingApiToken(env, request)) return errorJson("認証が必要です", 401);
+    const questions = await listPendingQuestions(env);
+    return json({
+      questions: questions.map((q) => ({
+        id: q.id,
+        text: q.text,
+        hasImage: q.hasImage,
+        createdAt: new Date(q.createdAt).toISOString(),
+        sessionName: q.sessionName,
+        sessionCode: q.sessionCode,
+      })),
+      total: questions.length,
+    });
   }
 
   if (!(await verifyAdmin(env, request))) return errorJson("認証が必要です", 401);

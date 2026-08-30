@@ -15,7 +15,8 @@ export default defineConfig(async () => {
             TEST_MIGRATIONS: migrations,
             ADMIN_PASSWORD: "test-admin-password",
             TURNSTILE_SECRET_KEY: "test-turnstile-secret",
-            APP_SECRET: "test-app-secret"
+            APP_SECRET: "test-app-secret",
+            PENDING_API_TOKEN: "test-pending-api-token"
           }
         }
       })

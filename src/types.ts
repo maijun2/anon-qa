@@ -7,6 +7,11 @@ export interface Env {
   ADMIN_PASSWORD: string;
   TURNSTILE_SECRET_KEY: string;
   APP_SECRET: string;
+  /** wrangler secret put で登録(オプション)。pending-questions API の Bearer 認証用。未設定なら全リクエスト拒否 */
+  PENDING_API_TOKEN?: string;
+  /** wrangler secret put で登録(オプション)。未設定なら Discord 通知は無効化される */
+  DISCORD_WEBHOOK_URL?: string;
+  DISCORD_THREAD_ID?: string;
   /** 公開情報(wrangler.jsonc の vars) */
   TURNSTILE_SITE_KEY: string;
 }

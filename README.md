@@ -21,6 +21,7 @@ npm run dev                                           # http://localhost:8787
 
 - ローカルでは Turnstile はテストキー(常に成功)で動作します
 - ローカルの admin パスワード等は `.dev.vars` で設定します(`.dev.vars.example` 参照)
+- 外部連携(pending-questions API・Discord Webhook 通知)はオプション機能です。`.dev.vars.example` の該当行を参照して `PENDING_API_TOKEN` / `DISCORD_WEBHOOK_URL` / `DISCORD_THREAD_ID` を設定してください(未設定でも本体機能に影響なし)
 
 ```bash
 npm run lint          # 型チェック (tsc --noEmit)

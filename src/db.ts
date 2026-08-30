@@ -9,6 +9,45 @@ export function getSessionById(env: Env, id: string): Promise<SessionRow | null>
   return env.DB.prepare("SELECT * FROM sessions WHERE id = ?").bind(id).first<SessionRow>();
 }
 
+export interface PendingQuestion {
+  id: string;
+  text: string;
+  hasImage: boolean;
+  createdAt: number;
+  sessionName: string;
+  sessionCode: string;
+}
+
+const PENDING_QUESTIONS_LIMIT = 50;
+
+/** 未回答質問(active セッション限定)。外部連携(pending-questions API)専用。token_hash は選択しない(匿名性維持) */
+export async function listPendingQuestions(env: Env): Promise<PendingQuestion[]> {
+  const rows = await env.DB.prepare(
+    `SELECT q.id, q.body, q.image_key, q.created_at, s.course_name, s.code
+     FROM questions q JOIN sessions s ON s.id = q.session_id
+     WHERE q.is_answered = 0 AND s.status = 'active'
+     ORDER BY q.created_at DESC
+     LIMIT ?`,
+  )
+    .bind(PENDING_QUESTIONS_LIMIT)
+    .all<{
+      id: string;
+      body: string;
+      image_key: string | null;
+      created_at: number;
+      course_name: string;
+      code: string;
+    }>();
+  return rows.results.map((r) => ({
+    id: r.id,
+    text: r.body,
+    hasImage: r.image_key !== null,
+    createdAt: r.created_at,
+    sessionName: r.course_name,
+    sessionCode: r.code,
+  }));
+}
+
 export function publicSession(s: SessionRow) {
   return {
     id: s.id,
