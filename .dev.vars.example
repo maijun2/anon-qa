@@ -3,3 +3,10 @@ ADMIN_PASSWORD=local-admin-password
 APP_SECRET=local-app-secret-change-me
 # Turnstile のテスト secret key(常に成功)
 TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
+
+# 以下はオプション機能(外部連携)。未設定でも動作する
+# pending-questions API(GET /api/admin/pending-questions)の Bearer 認証トークン
+# PENDING_API_TOKEN=local-pending-api-token
+# Discord Webhook 通知(質問投稿時の気づき用)。未設定なら通知は送信されない
+# DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxxx/yyyy
+# DISCORD_THREAD_ID=

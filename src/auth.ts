@@ -98,3 +98,11 @@ export async function verifyAdmin(env: Env, request: Request): Promise<boolean> 
   if (!match) return false;
   return (await verifyToken<{ a: number; exp: number }>(match[1], env.APP_SECRET)) !== null;
 }
+
+/** pending-questions API 用。外部サービス(KiroCrew 等)から Authorization: Bearer で呼ばれる想定 */
+export function verifyPendingApiToken(env: Env, request: Request): boolean {
+  if (!env.PENDING_API_TOKEN) return false;
+  const header = request.headers.get("Authorization") ?? "";
+  if (!header.startsWith("Bearer ")) return false;
+  return timingSafeEqualStr(header.slice("Bearer ".length), env.PENDING_API_TOKEN);
+}

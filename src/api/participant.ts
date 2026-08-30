@@ -1,4 +1,5 @@
 import { anonTokenHash, issueEntryToken, verifyEntry } from "../auth";
+import { notifyNewQuestion } from "../discord";
 import {
   getPublicQuestion,
   getPublicSurvey,
@@ -42,6 +43,7 @@ export async function handleEnter(request: Request, env: Env): Promise<Response>
 export async function handleParticipantApi(
   request: Request,
   env: Env,
+  ctx: ExecutionContext,
   code: string,
   rest: string[],
 ): Promise<Response> {
@@ -63,7 +65,7 @@ export async function handleParticipantApi(
   }
 
   if (rest[0] === "questions") {
-    return handleQuestions(request, env, session, rest.slice(1));
+    return handleQuestions(request, env, ctx, session, rest.slice(1));
   }
 
   if (rest[0] === "images" && rest.length === 1 && method === "POST") {
@@ -83,7 +85,13 @@ export async function handleParticipantApi(
   return errorJson("not found", 404);
 }
 
-async function handleQuestions(request: Request, env: Env, session: SessionRow, rest: string[]): Promise<Response> {
+async function handleQuestions(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  session: SessionRow,
+  rest: string[],
+): Promise<Response> {
   const method = request.method;
 
   if (rest.length === 0 && method === "GET") {
@@ -129,6 +137,14 @@ async function handleQuestions(request: Request, env: Env, session: SessionRow, 
       .run();
     const question = await getPublicQuestion(env, id);
     await broadcast(env, session.code, "question:new", { question });
+    ctx.waitUntil(
+      notifyNewQuestion(env, {
+        sessionName: session.course_name,
+        questionId: id,
+        text,
+        hasImage: body?.imageKey != null,
+      }),
+    );
     return json({ question: { ...question, isMine: true, voted: false } }, 201);
   }
 

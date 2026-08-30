@@ -33,14 +33,14 @@ function withSecurityHeaders(res: Response): Response {
 }
 
 export default {
-  async fetch(request, env): Promise<Response> {
+  async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
     const seg = url.pathname.split("/").filter(Boolean);
 
     let res: Response;
     if (seg[0] === "api") {
       try {
-        res = await handleApi(request, env, seg.slice(1));
+        res = await handleApi(request, env, ctx, seg.slice(1));
       } catch (err) {
         // 匿名性維持のため、リクエスト内容(IP・ヘッダ等)はログに出さない
         console.error("api error:", err instanceof Error ? err.stack : String(err));
@@ -57,7 +57,7 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-async function handleApi(request: Request, env: Env, seg: string[]): Promise<Response> {
+async function handleApi(request: Request, env: Env, ctx: ExecutionContext, seg: string[]): Promise<Response> {
   if (seg[0] === "config" && request.method === "GET") {
     return json({ turnstileSiteKey: env.TURNSTILE_SITE_KEY });
   }
@@ -68,7 +68,7 @@ async function handleApi(request: Request, env: Env, seg: string[]): Promise<Res
     return handleWebSocket(request, env, seg[1]);
   }
   if (seg[0] === "s" && seg.length >= 2) {
-    return handleParticipantApi(request, env, seg[1], seg.slice(2));
+    return handleParticipantApi(request, env, ctx, seg[1], seg.slice(2));
   }
   if (seg[0] === "admin") {
     return handleAdminApi(request, env, seg.slice(1));

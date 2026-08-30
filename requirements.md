@@ -77,6 +77,9 @@ Zoom のチャットでは質問者名が表示される問題を解消し、質
 - **テンプレート**
   - 参考情報・アンケートを事前登録
   - セッション作成時にテンプレート選択で自動コピー(繰り返し研修向け)
+- **外部連携(オプション)**
+  - `GET /api/admin/pending-questions`: 未回答質問一覧を返す API。`Authorization: Bearer <PENDING_API_TOKEN>` で認証(admin Cookie とは独立)。`status='active'` のセッションかつ `is_answered=false` の質問のみ、新着順で最大 50 件。講師が Discord 上の AI アシスタントに指示して質問を取得・回答案を生成する運用を想定(回答案は Discord 上のみで表示し、本アプリには一切表示・保存しない)
+  - Discord Webhook 通知: 質問投稿時に「質問が来た」ことへの気づき用として Discord へ通知(本文は 200 文字まで、画像添付時は明記)。`DISCORD_WEBHOOK_URL` 未設定時は無効。送信失敗は投稿処理に影響させない(fire-and-forget)
 
 ## 4. 非機能要件
 
@@ -85,6 +88,7 @@ Zoom のチャットでは質問者名が表示される問題を解消し、質
 - IP アドレス・User-Agent を DB に保存しない
 - ブラウザトークン(ランダム UUID)は本人の投稿(質問・返信)の編集/削除判定と投票の重複防止のみに使用し、個人と紐付けない
 - 参加者の返信もハッシュのみ保存し、講師を含め誰も質問者・返信者を特定できない
+- pending-questions API・Discord Webhook 通知(3.2 外部連携)も同様に IP・User-Agent・匿名トークン(ハッシュ含む)を一切含めない
 
 ### 4.2 データ保持
 
@@ -104,6 +108,7 @@ Zoom のチャットでは質問者名が表示される問題を解消し、質
 - 添付画像は PNG / JPEG / GIF / WebP のみ許可(SVG はストアド XSS 対策で拒否)。Content-Type と 5MB 制限をフロント・サーバの両方で検証
 - アクセスコードを知っていれば誰でも入室可能なため、共有範囲に注意(運用ルール)
 - admin はパスワード認証(環境変数 + セッション Cookie)
+- pending-questions API(外部連携)は専用の `PENDING_API_TOKEN`(環境変数)による Bearer 認証。admin パスワードや `APP_SECRET`(admin Cookie / 入室トークンの HMAC 署名用)とは分離し、漏洩時の影響範囲を限定する
 
 ## 5. clasmo との差別化ポイント
 
@@ -129,6 +134,7 @@ Zoom のチャットでは質問者名が表示される問題を解消し、質
   - D1 / R2: `wrangler d1 create` / `wrangler r2 bucket create`
   - Turnstile widget: Cloudflare API (`POST /accounts/{account_id}/challenges/widgets`) で作成
 - シークレット(admin パスワード、Turnstile secret key)は `wrangler secret put` で登録(コードには含めない)
+  - オプション(外部連携): `PENDING_API_TOKEN`(pending-questions API の Bearer 認証)、`DISCORD_WEBHOOK_URL` / `DISCORD_THREAD_ID`(Discord Webhook 通知)。未設定でも本体機能に影響しない
 
 ### 6.2 CI/CD(GitHub Actions)
 
