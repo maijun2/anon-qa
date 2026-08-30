@@ -23,8 +23,16 @@ npm run dev                                           # http://localhost:8787
 - ローカルの admin パスワード等は `.dev.vars` で設定します(`.dev.vars.example` 参照)
 
 ```bash
-npm run lint   # 型チェック (tsc --noEmit)
-npm test       # vitest (@cloudflare/vitest-pool-workers)
+npm run lint          # 型チェック (tsc --noEmit)
+npm test              # vitest (@cloudflare/vitest-pool-workers)
+npm run test:coverage # カバレッジ計測(istanbul プロバイダ、閾値による合否判定はなし)
+```
+
+E2E(Playwright)は `npm run dev` を別ターミナルで起動した状態で実行します(初回のみ `npx playwright install chromium`)。
+
+```bash
+npm run e2e:ui    # 講師 2 ペイン UI(sticky・回答送信)
+npm run e2e:main  # 主要導線: 入室 → 質問 → 投票 → 講師回答 → 投影
 ```
 
 ## 初回セットアップ(本番)
