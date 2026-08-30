@@ -78,7 +78,7 @@ Zoom のチャットでは質問者名が表示される問題を解消し、質
   - 参考情報・アンケートを事前登録
   - セッション作成時にテンプレート選択で自動コピー(繰り返し研修向け)
 - **外部連携(オプション)**
-  - `GET /api/admin/pending-questions`: 未回答質問一覧を返す API。`Authorization: Bearer <PENDING_API_TOKEN>` で認証(admin Cookie とは独立)。`status='active'` のセッションかつ `is_answered=false` の質問のみ、新着順で最大 50 件。講師が Discord 上の AI アシスタントに指示して質問を取得・回答案を生成する運用を想定(回答案は Discord 上のみで表示し、本アプリには一切表示・保存しない)
+  - `GET /api/admin/pending-questions`: 未回答質問一覧を返す外部連携 API。`Authorization: Bearer <PENDING_API_TOKEN>` で認証(admin Cookie とは独立)。`status='active'` のセッションかつ `is_answered=false` の質問のみ、新着順で最大 50 件。講師が未回答質問を外部ツールへ一括で取り出して確認するための連携口(回答の作成・投稿は講師が本アプリの管理画面で行い、本 API は取得専用で書き込みはしない)
   - Discord Webhook 通知: 質問投稿時に「質問が来た」ことへの気づき用として Discord へ通知(本文は 200 文字まで、画像添付時は明記)。`DISCORD_WEBHOOK_URL` 未設定時は無効。送信失敗は投稿処理に影響させない(fire-and-forget)
 
 ## 4. 非機能要件
