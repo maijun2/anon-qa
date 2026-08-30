@@ -5,14 +5,13 @@ on:
   push:
     branches: [main]
 
-env:
-  # devDependencies の playwright はスクリーンショット撮影用途のみで CI では使わないため、
-  # npm ci でブラウザバイナリをダウンロードしないようにする
-  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # e2e ジョブ以外では playwright のブラウザバイナリを使わないため、
+      # npm ci でダウンロードしないようにする
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -21,7 +20,39 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
-      - run: npm test
+      - run: npm run test:coverage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
+
+  e2e:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: cp .dev.vars.example .dev.vars
+      - run: npx wrangler d1 migrations apply anon-qa-db --local
+      - name: Start wrangler dev
+        run: |
+          npx wrangler dev > wrangler-dev.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8787/api/config > /dev/null && exit 0
+            sleep 2
+          done
+          cat wrangler-dev.log
+          exit 1
+      - run: npm run e2e:ui
+      - run: npm run e2e:main
+      - if: failure()
+        run: cat wrangler-dev.log
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

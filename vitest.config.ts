@@ -21,7 +21,13 @@ export default defineConfig(async () => {
       })
     ],
     test: {
-      setupFiles: ["./test/apply-migrations.ts"]
+      setupFiles: ["./test/apply-migrations.ts"],
+      coverage: {
+        // v8 プロバイダは workerd に node:inspector が無く非対応(pool 側が実行時にエラーで指示する)
+        provider: "istanbul",
+        reporter: ["text", "html"],
+        reportsDirectory: "./coverage"
+      }
     }
   };
 });
