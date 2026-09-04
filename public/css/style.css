@@ -260,6 +260,8 @@ label { font-size: 0.9rem; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
   margin: 20px 0 8px;
 }
 
@@ -357,6 +359,7 @@ label { font-size: 0.9rem; }
   border-radius: var(--radius);
   border: 1px solid var(--border);
   margin-top: 4px;
+  cursor: zoom-in;
 }
 
 .question-actions {
@@ -410,6 +413,7 @@ label { font-size: 0.9rem; }
   border-radius: var(--radius);
   border: 1px solid var(--border);
   margin: 4px 0;
+  cursor: zoom-in;
 }
 
 .answer-label {
@@ -424,10 +428,6 @@ label { font-size: 0.9rem; }
 
 /* 本文中の自動リンク */
 .question-body a, .answer a, .material-body a { color: var(--accent); word-break: break-all; }
-
-.answered-section { margin-top: 24px; }
-.answered-section summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
-.answered-section > .stack { margin-top: 8px; }
 
 /* 画像プレビュー */
 .image-preview {
@@ -685,6 +685,63 @@ th, td {
 .detail-card { padding: 16px; }
 
 .detail-empty { color: var(--text-muted); text-align: center; padding: 32px 16px; }
+
+/* ---------- 画像ライトボックス(参加者 / 講師 共通) ---------- */
+
+/* display: flex が [hidden] を打ち消すため、非表示ルールを明示する */
+.lightbox[hidden] { display: none; }
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.75);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.lightbox.open { opacity: 1; }
+
+.lightbox-img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.45);
+  transform: scale(0.97);
+  transition: transform 0.18s ease;
+}
+
+.lightbox.open .lightbox-img { transform: scale(1); }
+
+.lightbox-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lightbox-close:hover { background: #fff; }
+
+/* ライトボックス表示中は背面をスクロールさせない */
+body.no-scroll { overflow: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lightbox, .lightbox-img { transition: none; }
+}
 
 /* 投影モード: 大文字・高コントラスト */
 body.present {

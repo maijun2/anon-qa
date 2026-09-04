@@ -21,6 +21,8 @@
     questions: [],
     materials: [],
     surveys: [],
+    // 絞り込み(講師画面と同じ命名): open / done / mine / all
+    filter: "open",
     sort: "new",
     pendingImage: null,
     replyPendingImage: null,
@@ -316,6 +318,34 @@
     });
   });
 
+  document.querySelectorAll(".seg-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (state.filter === btn.dataset.status) return;
+      state.filter = btn.dataset.status;
+      document.querySelectorAll(".seg-btn").forEach((b) => b.classList.toggle("active", b === btn));
+      renderQuestions();
+    });
+  });
+
+  function matchesFilter(q) {
+    if (state.filter === "open") return !q.isAnswered;
+    if (state.filter === "done") return q.isAnswered;
+    if (state.filter === "mine") return q.isMine;
+    return true;
+  }
+
+  // 件数バッジは読み込み済みの質問に対する集計。
+  // 絞り込みで一覧が短くなると番兵が可視域に入り、既存の追加読み込みで残りも順次反映される
+  function updateFilterCounts() {
+    const all = state.questions.length;
+    const done = state.questions.filter((q) => q.isAnswered).length;
+    const mine = state.questions.filter((q) => q.isMine).length;
+    $("count-open").textContent = String(all - done);
+    $("count-done").textContent = String(done);
+    $("count-mine").textContent = String(mine);
+    $("count-all").textContent = String(all);
+  }
+
   function sortQuestions(list) {
     const sorted = [...list];
     if (state.sort === "votes") {
@@ -353,7 +383,7 @@
           ${q.pending ? '<span class="muted small">送信中…</span>' : ""}
         </div>
         ${bodyHtml}
-        ${q.imageKey ? `<a href="${imageUrl(q.imageKey)}" target="_blank" rel="noopener"><img class="question-image" src="${imageUrl(q.imageKey)}" alt="添付画像" loading="lazy"></a>` : ""}
+        ${q.imageKey ? `<a href="${imageUrl(q.imageKey)}" target="_blank" rel="noopener" data-lightbox><img class="question-image" src="${imageUrl(q.imageKey)}" alt="添付画像" loading="lazy"></a>` : ""}
         ${q.answers.length ? `<div class="answers">${q.answers.map((a) => answerHtml(a)).join("")}</div>` : ""}
         ${state.replyingId === q.id ? `
           <div class="field reply-form">
@@ -408,7 +438,7 @@
         <span class="answer-label${isInstructor ? "" : " answer-label-participant"}">${isInstructor ? "講師" : "参加者"}</span>
         ${a.isMine ? '<span class="badge badge-mine">自分の返信</span>' : ""}
         ${a.body ? `<p>${AnonQA.linkify(a.body)}</p>` : ""}
-        ${a.imageKey ? `<a href="${imageUrl(a.imageKey)}" target="_blank" rel="noopener"><img class="answer-image" src="${imageUrl(a.imageKey)}" alt="添付画像" loading="lazy"></a>` : ""}
+        ${a.imageKey ? `<a href="${imageUrl(a.imageKey)}" target="_blank" rel="noopener" data-lightbox><img class="answer-image" src="${imageUrl(a.imageKey)}" alt="添付画像" loading="lazy"></a>` : ""}
         <span class="muted small">${AnonQA.formatJst(a.createdAt)}${a.updatedAt > a.createdAt ? "(編集済み)" : ""}</span>
         ${editable ? `
           <button class="btn btn-ghost btn-small" data-action="edit-answer">編集</button>
@@ -421,78 +451,78 @@
   }
 
   function renderQuestions() {
-    const open = sortQuestions(state.questions.filter((q) => !q.isAnswered));
-    const answered = sortQuestions(state.questions.filter((q) => q.isAnswered));
-    $("question-list").innerHTML = open.map(questionCard).join("");
-    $("answered-list").innerHTML = answered.map(questionCard).join("");
-    $("answered-count").textContent = String(answered.length);
-    $("question-empty").hidden = open.length > 0 || answered.length > 0;
-    $("answered-section").style.display = answered.length > 0 ? "" : "none";
+    const items = sortQuestions(state.questions.filter(matchesFilter));
+    $("question-list").innerHTML = items.map(questionCard).join("");
+    updateFilterCounts();
+    // 1 件も無い(初回)場合と、絞り込みで 0 件の場合で文言を出し分ける
+    $("question-empty").textContent = state.questions.length === 0
+      ? "まだ質問はありません。最初の質問を投稿してみましょう。"
+      : "該当する質問はありません。";
+    $("question-empty").hidden = items.length > 0;
   }
 
-  ["question-list", "answered-list"].forEach((listId) => {
-    // 未読ドットはカードのタップで既読化する。
-    // 全再描画すると同一クリック中の他ハンドラが detached DOM を掴むため、その場で除去する
-    $(listId).addEventListener("click", (ev) => {
-      const cardEl = ev.target.closest(".question-card");
-      if (cardEl && state.unreadIds.delete(cardEl.dataset.id)) {
-        const note = cardEl.querySelector(".unread-note");
-        if (note) note.remove();
-        updateBellUnread();
-      }
-    });
+  // 質問一覧のイベントは委譲で 1 箇所にまとめる(カードは再描画のたびに作り直されるため)
+  // 未読ドットはカードのタップで既読化する。
+  // 全再描画すると同一クリック中の他ハンドラが detached DOM を掴むため、その場で除去する
+  $("question-list").addEventListener("click", (ev) => {
+    const cardEl = ev.target.closest(".question-card");
+    if (cardEl && state.unreadIds.delete(cardEl.dataset.id)) {
+      const note = cardEl.querySelector(".unread-note");
+      if (note) note.remove();
+      updateBellUnread();
+    }
+  });
 
-    $(listId).addEventListener("click", (ev) => {
-      const btn = ev.target.closest("[data-action]");
-      if (!btn) return;
-      const card = btn.closest(".question-card");
-      const q = state.questions.find((x) => x.id === card.dataset.id);
-      if (!q) return;
-      const action = btn.dataset.action;
-      if (action === "vote") toggleVote(q);
-      if (action === "edit") { state.editingId = q.id; renderQuestions(); }
-      if (action === "cancel-edit") { state.editingId = null; renderQuestions(); }
-      if (action === "save-edit") saveEdit(q, card.querySelector(".edit-input").value);
-      if (action === "delete") deleteQuestion(q);
-      if (action === "reply") {
-        state.replyingId = q.id;
-        clearReplyPendingImage();
-        renderQuestions();
-        const input = document.querySelector(`[data-id="${CSS.escape(q.id)}"] .reply-input`);
-        if (input) input.focus();
-      }
-      if (action === "cancel-reply") { state.replyingId = null; clearReplyPendingImage(); renderQuestions(); }
-      if (action === "reply-image-remove") { clearReplyPendingImage(); renderQuestions(); }
-      if (action === "submit-reply") submitReply(q, card.querySelector(".reply-input").value);
-      const answerEl = btn.closest("[data-answer-id]");
-      const answerId = answerEl ? answerEl.dataset.answerId : null;
-      if (action === "edit-answer") { state.editingAnswerId = answerId; renderQuestions(); }
-      if (action === "cancel-edit-answer") { state.editingAnswerId = null; renderQuestions(); }
-      if (action === "save-edit-answer") saveAnswerEdit(q, answerId, answerEl.querySelector(".answer-edit-input").value);
-      if (action === "delete-answer") deleteAnswer(q, answerId);
-    });
+  $("question-list").addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-action]");
+    if (!btn) return;
+    const card = btn.closest(".question-card");
+    const q = state.questions.find((x) => x.id === card.dataset.id);
+    if (!q) return;
+    const action = btn.dataset.action;
+    if (action === "vote") toggleVote(q);
+    if (action === "edit") { state.editingId = q.id; renderQuestions(); }
+    if (action === "cancel-edit") { state.editingId = null; renderQuestions(); }
+    if (action === "save-edit") saveEdit(q, card.querySelector(".edit-input").value);
+    if (action === "delete") deleteQuestion(q);
+    if (action === "reply") {
+      state.replyingId = q.id;
+      clearReplyPendingImage();
+      renderQuestions();
+      const input = document.querySelector(`[data-id="${CSS.escape(q.id)}"] .reply-input`);
+      if (input) input.focus();
+    }
+    if (action === "cancel-reply") { state.replyingId = null; clearReplyPendingImage(); renderQuestions(); }
+    if (action === "reply-image-remove") { clearReplyPendingImage(); renderQuestions(); }
+    if (action === "submit-reply") submitReply(q, card.querySelector(".reply-input").value);
+    const answerEl = btn.closest("[data-answer-id]");
+    const answerId = answerEl ? answerEl.dataset.answerId : null;
+    if (action === "edit-answer") { state.editingAnswerId = answerId; renderQuestions(); }
+    if (action === "cancel-edit-answer") { state.editingAnswerId = null; renderQuestions(); }
+    if (action === "save-edit-answer") saveAnswerEdit(q, answerId, answerEl.querySelector(".answer-edit-input").value);
+    if (action === "delete-answer") deleteAnswer(q, answerId);
+  });
 
-    // 返信フォームの画像添付(ファイル選択)
-    $(listId).addEventListener("change", (ev) => {
-      const input = ev.target.closest(".reply-image-input");
-      if (!input || !input.files || !input.files[0]) return;
-      setReplyPendingImage(input.files[0]);
-      input.value = "";
-    });
+  // 返信フォームの画像添付(ファイル選択)
+  $("question-list").addEventListener("change", (ev) => {
+    const input = ev.target.closest(".reply-image-input");
+    if (!input || !input.files || !input.files[0]) return;
+    setReplyPendingImage(input.files[0]);
+    input.value = "";
+  });
 
-    // 返信フォームへの画像貼り付け
-    $(listId).addEventListener("paste", (ev) => {
-      if (!ev.target.closest(".reply-input")) return;
-      const items = ev.clipboardData && ev.clipboardData.items;
-      if (!items) return;
-      for (const item of items) {
-        if (isAllowedImage(item.type)) {
-          ev.preventDefault();
-          setReplyPendingImage(item.getAsFile());
-          return;
-        }
+  // 返信フォームへの画像貼り付け
+  $("question-list").addEventListener("paste", (ev) => {
+    if (!ev.target.closest(".reply-input")) return;
+    const items = ev.clipboardData && ev.clipboardData.items;
+    if (!items) return;
+    for (const item of items) {
+      if (isAllowedImage(item.type)) {
+        ev.preventDefault();
+        setReplyPendingImage(item.getAsFile());
+        return;
       }
-    });
+    }
   });
 
   function setReplyPendingImage(file) {

@@ -126,6 +126,99 @@ window.AnonQA = (() => {
     reflect();
   }
 
+  // ---------- 画像ライトボックス(3 ページ共通) ----------
+  // a[data-lightbox] の左クリックだけを横取りしてページ内中央に拡大表示する。
+  // href / target="_blank" はそのまま残すため、⌘/Ctrl/中クリックでの別タブ表示や
+  // JS 無効時のフォールバックは従来どおり動く。
+  let lightbox = null;
+  let lightboxImg = null;
+  let lightboxCloseBtn = null;
+  let lightboxHideTimer = null;
+  let lightboxLastFocus = null;
+
+  function ensureLightbox() {
+    if (lightbox) return lightbox;
+    lightbox = document.createElement("div");
+    lightbox.className = "lightbox";
+    lightbox.hidden = true;
+    lightbox.setAttribute("role", "dialog");
+    lightbox.setAttribute("aria-modal", "true");
+    lightbox.setAttribute("aria-label", "添付画像");
+
+    lightboxCloseBtn = document.createElement("button");
+    lightboxCloseBtn.type = "button";
+    lightboxCloseBtn.className = "lightbox-close";
+    lightboxCloseBtn.setAttribute("aria-label", "閉じる");
+    lightboxCloseBtn.textContent = "×";
+
+    lightboxImg = document.createElement("img");
+    lightboxImg.className = "lightbox-img";
+    lightboxImg.alt = "添付画像";
+
+    lightbox.append(lightboxCloseBtn, lightboxImg);
+    document.body.appendChild(lightbox);
+
+    lightboxCloseBtn.addEventListener("click", closeLightbox);
+    // 背景(オーバーレイ自身)のクリックのみで閉じる。画像のクリックでは閉じない
+    lightbox.addEventListener("click", (ev) => {
+      if (ev.target === lightbox) closeLightbox();
+    });
+    return lightbox;
+  }
+
+  function lightboxOpen() {
+    return lightbox !== null && !lightbox.hidden;
+  }
+
+  function openLightbox(src) {
+    ensureLightbox();
+    clearTimeout(lightboxHideTimer);
+    lightboxLastFocus = document.activeElement;
+    lightboxImg.src = src;
+    lightbox.hidden = false;
+    document.body.classList.add("no-scroll");
+    // hidden 解除と同フレームでクラスを足すと transition が走らないため 1 フレーム待つ
+    requestAnimationFrame(() => lightbox.classList.add("open"));
+    lightboxCloseBtn.focus();
+  }
+
+  function closeLightbox() {
+    if (!lightboxOpen()) return;
+    lightbox.classList.remove("open");
+    document.body.classList.remove("no-scroll");
+    // フェードアウトの完了を待って hidden にする(transitionend が来ない環境の保険付き)
+    clearTimeout(lightboxHideTimer);
+    lightboxHideTimer = setTimeout(() => {
+      lightbox.hidden = true;
+      lightboxImg.removeAttribute("src");
+    }, 250);
+    if (lightboxLastFocus && lightboxLastFocus.focus) lightboxLastFocus.focus();
+    lightboxLastFocus = null;
+  }
+
+  document.addEventListener("click", (ev) => {
+    // 修飾キー付き / 左クリック以外は既定動作(別タブ)に任せる
+    if (ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    const link = ev.target.closest ? ev.target.closest("a[data-lightbox]") : null;
+    if (!link || !link.href) return;
+    ev.preventDefault();
+    openLightbox(link.href);
+  });
+
+  document.addEventListener("keydown", (ev) => {
+    if (!lightboxOpen()) return;
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      closeLightbox();
+      return;
+    }
+    // フォーカス可能要素は閉じるボタンのみ。オーバーレイ外へ Tab 移動させない
+    if (ev.key === "Tab") {
+      ev.preventDefault();
+      lightboxCloseBtn.focus();
+    }
+  });
+
   // 保存は UTC(epoch ms)、表示は JST
   function formatJst(ms) {
     return new Date(ms).toLocaleString("ja-JP", {

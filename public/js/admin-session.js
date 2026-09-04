@@ -398,7 +398,7 @@
       <div class="answer${isInstructor ? "" : " answer-participant"}" data-answer-id="${esc(a.id)}">
         <span class="answer-label${isInstructor ? "" : " answer-label-participant"}">${isInstructor ? "講師" : "参加者"}</span>
         ${a.body ? `<p>${AnonQA.linkify(a.body)}</p>` : ""}
-        ${a.imageKey ? `<a href="${imageUrl(a.imageKey)}" target="_blank" rel="noopener"><img class="answer-image" src="${imageUrl(a.imageKey)}" alt="添付画像" loading="lazy"></a>` : ""}
+        ${a.imageKey ? `<a href="${imageUrl(a.imageKey)}" target="_blank" rel="noopener" data-lightbox><img class="answer-image" src="${imageUrl(a.imageKey)}" alt="添付画像" loading="lazy"></a>` : ""}
         <span class="muted small">${AnonQA.formatJst(a.createdAt)}${a.updatedAt > a.createdAt ? "(編集済み)" : ""}</span>
         <button class="btn btn-small btn-ghost btn-danger-text" data-action="delete-answer">削除</button>
       </div>`;
@@ -427,7 +427,7 @@
         <span class="muted small">👍 ${q.votes}</span>
       </div>
       <p class="question-body">${AnonQA.linkify(q.body)}</p>
-      ${q.imageKey ? `<a href="${imageUrl(q.imageKey)}" target="_blank" rel="noopener"><img class="question-image" src="${imageUrl(q.imageKey)}" alt="添付画像" loading="lazy"></a>` : ""}
+      ${q.imageKey ? `<a href="${imageUrl(q.imageKey)}" target="_blank" rel="noopener" data-lightbox><img class="question-image" src="${imageUrl(q.imageKey)}" alt="添付画像" loading="lazy"></a>` : ""}
       ${q.answers.length ? `<div class="answers">${q.answers.map(answerHtml).join("")}</div>` : ""}
       <div class="field" style="margin-top: 12px;">
         <textarea class="textarea answer-input" rows="3"
