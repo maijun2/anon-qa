@@ -46,8 +46,14 @@
         <p id="session-ended-note" class="muted small" hidden>このセッションは終了しています。閲覧のみ可能です。</p>
       </form>
 
+      <!-- 絞り込み(未回答 / 回答済み / 自分の質問 / すべて)。件数は読み込み済み質問のクライアント集計 -->
       <div class="list-header">
-        <h2>みんなの質問</h2>
+        <div class="seg" role="group" aria-label="質問の絞り込み">
+          <button type="button" class="seg-btn active" data-status="open">未回答 <span class="seg-count" id="count-open">0</span></button>
+          <button type="button" class="seg-btn" data-status="done">回答済み <span class="seg-count" id="count-done">0</span></button>
+          <button type="button" class="seg-btn" data-status="mine">自分の質問 <span class="seg-count" id="count-mine">0</span></button>
+          <button type="button" class="seg-btn" data-status="all">すべて <span class="seg-count" id="count-all">0</span></button>
+        </div>
         <div class="sort-toggle" role="group" aria-label="並び順">
           <button class="btn btn-ghost btn-small sort-btn active" data-sort="new">新着順</button>
           <button class="btn btn-ghost btn-small sort-btn" data-sort="votes">いいね順</button>
@@ -59,11 +65,6 @@
       </div>
       <div id="question-list" class="stack"></div>
       <p id="question-empty" class="muted" hidden>まだ質問はありません。最初の質問を投稿してみましょう。</p>
-
-      <details id="answered-section" class="answered-section" open>
-        <summary>回答済みの質問(<span id="answered-count">0</span>)</summary>
-        <div id="answered-list" class="stack"></div>
-      </details>
 
       <!-- 無限スクロール用の番兵。画面に入ると次の 50 件を追加取得する -->
       <div id="question-sentinel" aria-hidden="true"></div>
