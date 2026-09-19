@@ -145,7 +145,7 @@ Zoom のチャットでは質問者名が表示される問題を解消し、質
 - `main` ブランチへの push で自動デプロイ
   - `cloudflare/wrangler-action` を使用
   - ステップ: D1 migrations apply → wrangler deploy
-- PR 時: lint + テスト(任意)
+- PR 時: lint + ユニットテスト(vitest + coverage 計測、レポートを artifact 保存)+ E2E(`wrangler dev` をローカル起動 + Playwright chromium)。deploy ジョブは E2E に依存させない(Turnstile 実 API 等の外部ネットワーク起因のフレーキーさでデプロイを止めないため)
 - 必要な GitHub Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`
 
 ### 6.3 残る手作業(初回のみ)
