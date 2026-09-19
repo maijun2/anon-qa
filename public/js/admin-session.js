@@ -19,6 +19,7 @@
     answerDraft: "",
     answerPendingImage: null,
     editingMaterialId: null,
+    editingSurveyId: null,
     // 一括モデレーション(選択モード)
     bulkMode: false,
     checkedIds: new Set(),
@@ -804,30 +805,65 @@
   });
 
   // ---------- アンケート ----------
+  /** 選択肢を作成フォームと同じ「1 行に 1 つ」のテキストに戻す */
+  function surveyOptionsText(s) {
+    return s.options.map((o) => o.label).join("\n");
+  }
+
   function renderSurveys() {
     const statusLabel = { draft: "下書き", published: "配信中", closed: "終了" };
+    // 編集中に別タブ等から配信されて draft でなくなった場合は編集 UI を閉じる(配信済みは編集不可)
+    const editing = state.surveys.find((s) => s.id === state.editingSurveyId);
+    if (editing && editing.status !== "draft") state.editingSurveyId = null;
+    // 他アンケートへの投票(survey:results)等で再描画されても入力途中の内容を失わないよう DOM から退避
+    const editingCard = editing ? $("survey-list").querySelector(`[data-id="${CSS.escape(editing.id)}"]`) : null;
+    const titleField = editingCard?.querySelector('[data-field="title"]');
+    let draft = null;
+    if (titleField) {
+      draft = {
+        title: titleField.value,
+        isMulti: editingCard.querySelector('[data-field="multi"]').checked,
+        options: editingCard.querySelector('[data-field="options"]').value,
+      };
+    } else if (editing) {
+      draft = { title: editing.title, isMulti: editing.isMulti, options: surveyOptionsText(editing) };
+    }
     $("survey-list").innerHTML = [...state.surveys].reverse().map((s) => {
       const total = Math.max(s.totalRespondents, 1);
       return `
       <div class="card" data-id="${esc(s.id)}">
-        <div class="question-head">
-          <span class="badge badge-status-${esc(s.status)}">${statusLabel[s.status]}</span>
-          ${s.isMulti ? '<span class="muted small">複数選択可</span>' : ""}
-        </div>
-        <h3>${esc(s.title)}</h3>
-        <div class="survey-results">
-          ${s.options.map((o) => `
-            <div class="survey-result-row">
-              <div class="survey-result-label"><span>${esc(o.label)}</span><span>${o.count} 票</span></div>
-              <div class="bar-track"><div class="bar-fill" style="width:${Math.round((o.count / total) * 100)}%"></div></div>
-            </div>`).join("")}
-          <p class="muted small">回答者: ${s.totalRespondents} 人</p>
-        </div>
-        <div class="admin-item-actions">
-          ${s.status === "draft" ? '<button class="btn btn-small btn-primary" data-action="publish">配信する</button>' : ""}
-          ${s.status === "published" ? '<button class="btn btn-small btn-ghost" data-action="close">受付を終了する</button>' : ""}
-          <button class="btn btn-small btn-ghost btn-danger-text" data-action="delete-survey">削除</button>
-        </div>
+        ${state.editingSurveyId === s.id ? `
+          <div class="form-row" style="margin: 0 0 8px;">
+            <input class="input" data-field="title" value="${esc(draft.title)}" placeholder="質問文(必須)" style="flex: 2;">
+            <label class="small" style="white-space: nowrap;">
+              <input type="checkbox" data-field="multi" ${draft.isMulti ? "checked" : ""}> 複数選択可
+            </label>
+          </div>
+          <textarea class="textarea" data-field="options" rows="3" placeholder="選択肢(1 行に 1 つ、2 つ以上)">${esc(draft.options)}</textarea>
+          <div class="admin-item-actions">
+            <button class="btn btn-primary btn-small" data-action="save-survey">保存</button>
+            <button class="btn btn-ghost btn-small" data-action="cancel-survey">キャンセル</button>
+          </div>` : `
+          <div class="question-head">
+            <span class="badge badge-status-${esc(s.status)}">${statusLabel[s.status]}</span>
+            ${s.isMulti ? '<span class="muted small">複数選択可</span>' : ""}
+          </div>
+          <h3>${esc(s.title)}</h3>
+          <div class="survey-results">
+            ${s.options.map((o) => `
+              <div class="survey-result-row">
+                <div class="survey-result-label"><span>${esc(o.label)}</span><span>${o.count} 票</span></div>
+                <div class="bar-track"><div class="bar-fill" style="width:${Math.round((o.count / total) * 100)}%"></div></div>
+              </div>`).join("")}
+            <p class="muted small">回答者: ${s.totalRespondents} 人</p>
+          </div>
+          <div class="admin-item-actions">
+            ${s.status === "draft" ? '<button class="btn btn-small btn-primary" data-action="publish">配信する</button>' : ""}
+            ${s.status === "published" ? '<button class="btn btn-small btn-ghost" data-action="close">受付を終了する</button>' : ""}
+            ${s.status === "draft" ? '<button class="btn btn-small btn-ghost" data-action="edit-survey">編集</button>' : ""}
+            <button class="btn btn-small btn-ghost" data-action="duplicate-survey">複製</button>
+            <button class="btn btn-small btn-ghost btn-danger-text" data-action="delete-survey">削除</button>
+          </div>`}
       </div>`;
     }).join("");
     $("survey-empty").hidden = state.surveys.length > 0;
@@ -868,6 +904,33 @@
       if (btn.dataset.action === "close") {
         const data = await AdminQA.api(`/sessions/${sessionId}/surveys/${s.id}/close`, { method: "POST" });
         Object.assign(s, data.survey);
+      }
+      if (btn.dataset.action === "edit-survey") {
+        state.editingSurveyId = s.id;
+      }
+      if (btn.dataset.action === "cancel-survey") {
+        state.editingSurveyId = null;
+      }
+      if (btn.dataset.action === "save-survey") {
+        const data = await AdminQA.api(`/sessions/${sessionId}/surveys/${s.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            title: card.querySelector('[data-field="title"]').value,
+            isMulti: card.querySelector('[data-field="multi"]').checked,
+            options: card.querySelector('[data-field="options"]').value.split("\n").map((x) => x.trim()).filter(Boolean),
+          }),
+        });
+        Object.assign(s, data.survey);
+        state.editingSurveyId = null;
+      }
+      if (btn.dataset.action === "duplicate-survey") {
+        // サーバは呼ばず作成フォームに転記するだけ。講師がそのまま / 修正してから「作成(下書き)」を押す
+        $("survey-title").value = s.title;
+        $("survey-multi").checked = s.isMulti;
+        $("survey-options").value = surveyOptionsText(s);
+        $("survey-form").scrollIntoView({ behavior: "smooth", block: "start" });
+        $("survey-title").focus();
+        return;
       }
       if (btn.dataset.action === "delete-survey") {
         if (!confirm("このアンケートを削除しますか?")) return;

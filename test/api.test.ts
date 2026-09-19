@@ -743,6 +743,36 @@ describe("アンケート", () => {
     expect(after.surveys.find((s) => s.id === surveyId)?.status).toBe("published");
   });
 
+  it("draft は編集でき、配信後は 400", async () => {
+    const cookie = await adminLogin();
+    const session = await createSession(cookie);
+    const surveyId = await createSurvey(cookie, session.id);
+    const patch = (body: unknown) =>
+      SELF.fetch(`${BASE}/api/admin/sessions/${session.id}/surveys/${surveyId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Cookie: cookie },
+        body: JSON.stringify(body),
+      });
+
+    const edited = await patch({ title: "Module 2 の理解度は?", isMulti: true, options: ["A", "B", "C", "D"] });
+    expect(edited.status).toBe(200);
+    const { survey } = (await edited.json()) as {
+      survey: { title: string; isMulti: boolean; options: Array<{ label: string }> };
+    };
+    expect(survey.title).toBe("Module 2 の理解度は?");
+    expect(survey.isMulti).toBe(true);
+    expect(survey.options.map((o) => o.label)).toEqual(["A", "B", "C", "D"]);
+
+    // 選択肢 1 つは不正
+    expect((await patch({ title: "x", options: ["only"] })).status).toBe(400);
+
+    await SELF.fetch(`${BASE}/api/admin/sessions/${session.id}/surveys/${surveyId}/publish`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    expect((await patch({ title: "配信後", options: ["A", "B"] })).status).toBe(400);
+  });
+
   it("単一選択は複数送信で 400、再回答で票が置き換わる", async () => {
     const cookie = await adminLogin();
     const session = await createSession(cookie);
